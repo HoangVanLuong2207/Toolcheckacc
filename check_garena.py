@@ -36,7 +36,7 @@ class GarenaAccountChecker:
             os.makedirs(directory, exist_ok=True)
         if not os.path.exists(output_file):
             with open(output_file, "w", encoding="utf-8") as f:
-                f.write("Email  ||  M?t kh?u  ||  Tr?ng th?i    ||  Th?ng b?o\n")
+                f.write("Email  ||  Mật khóa  ||  Trạng thái    ||  Thông báo\n")
             self.log_progress(f"T\u1ea1o m\u1edbi file k\u1ebft qu\u1ea3: {output_file}", Fore.GREEN)
 
 
@@ -150,20 +150,68 @@ class GarenaAccountChecker:
             time.sleep(random.uniform(0.05, 0.15))
 
     def remove_account_from_source(self, email, password, file_path="accounts.txt"):
-        """Xoa tai khoan khoi file nguon de tranh kiem tra lai."""
+        """Xoa tai khoan khoi file nguon sau khi da xu ly."""
         try:
-            if not os.path.exists(file_path):
+            if not file_path or not os.path.exists(file_path):
                 return
-            target = f"{email}:{password}"
             with open(file_path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
-            filtered = [line for line in lines if line.strip() != target]
-            if len(filtered) != len(lines):
+            removed = False
+            remaining = []
+            for line in lines:
+                stripped = line.strip()
+                if not stripped:
+                    remaining.append(line)
+                    continue
+                normalized = stripped
+                if ":" not in normalized and "|" in normalized:
+                    normalized = normalized.replace("|", ":", 1)
+                if ":" in normalized:
+                    left, right = [part.strip() for part in normalized.split(":", 1)]
+                    if left == email and right == password and not removed:
+                        removed = True
+                        continue
+                remaining.append(line)
+            if removed:
                 with open(file_path, "w", encoding="utf-8") as f:
-                    f.writelines(filtered)
-                self.log_progress(f"Da xoa {email} khoi {file_path}.", Fore.YELLOW)
+                    f.writelines(remaining)
+                self.log_progress(f"Da xoa {email} khoi {file_path}.", Fore.CYAN)
         except Exception as e:
             self.log_progress(f"Khong the xoa {email} khoi {file_path}: {e}", Fore.YELLOW)
+
+
+    def reset_output_files(self, output_file, valid_file, invalid_file, notcheck_file):
+        """Dat lai cac file ket qua truoc khi bat dau mot lan kiem tra moi."""
+        self.log_progress("Dang reset cac file ket qua cu.", Fore.YELLOW)
+        file_defaults = {
+            output_file: "Email  ||  Mật khẩu  ||  Trạng thái    ||  Thông báo\n",
+            valid_file: "",
+            "clonepass.txt": "",
+            invalid_file: "",
+            notcheck_file: "",
+            "liveordie.txt": "",
+            "clonelive.js": "[]\n",
+            "clonelive.txt": "",
+            "clonedie.js": "[]\n",
+            "clonedie.txt": ""
+        }
+        processed = set()
+        for path_value, content in file_defaults.items():
+            if not path_value or path_value in processed:
+                continue
+            processed.add(path_value)
+            try:
+                with open(path_value, "w", encoding="utf-8") as f:
+                    f.write(content)
+            except Exception as reset_error:
+                self.log_progress(f"Khong the reset {path_value}: {reset_error}", Fore.YELLOW)
+        self.results.clear()
+        self.checked = 0
+        self.valid = 0
+        self.invalid = 0
+        self.clonelive_added = 0
+        self.clonelive_total_current = 0
+        self.total_accounts = 0
 
 
     def check_account(self, email, password):
@@ -259,6 +307,9 @@ class GarenaAccountChecker:
                     if "chưa xác định lỗi sai" in lower_error or "an unknown error occured." in lower_error:
                         self.log_progress("Lỗi mạng hoặc lỗi không xác định.", Fore.YELLOW)
                         return False, "NOT_INTERNET"
+                    if "user has been banned" in lower_error or "tài khoản đã bị khóa" in lower_error:
+                        self.log_progress("Tài khoản bị khóa.", Fore.RED)
+                        return False, "Tài khoản bị khóa"
                     self.log_progress(f"Lỗi khác: {error_text}", Fore.YELLOW)
                     return False, f"Lỗi: {error_text}"
             except NoSuchElementException:
@@ -340,6 +391,13 @@ class GarenaAccountChecker:
                         self.clonelive_total_current = len(existing_accounts)
                         with open(clonelive_path, "w", encoding="utf-8") as js_file:
                             json.dump(existing_accounts, js_file, ensure_ascii=False, indent=2)
+                        try:
+                            with open("clonelive.txt", "w", encoding="utf-8") as txt_file:
+                                for entry in existing_accounts:
+                                    txt_file.write(f"{entry['username']}:{entry['password']}\n")
+                        except Exception as txt_error:
+                            self.log_progress(f"Khong ghi duoc clonelive.txt: {txt_error}", Fore.YELLOW)
+
                         if added_new:
                             self.log_progress("Thêm tài khoản Bình thường clonelive.js.", Fore.GREEN)
                         else:
@@ -367,6 +425,13 @@ class GarenaAccountChecker:
                             added_new = True
                         with open(clonedie_path, "w", encoding="utf-8") as js_file:
                             json.dump(existing_accounts, js_file, ensure_ascii=False, indent=2)
+                        try:
+                            with open("clonedie.txt", "w", encoding="utf-8") as txt_file:
+                                for entry in existing_accounts:
+                                    txt_file.write(f"{entry['username']}:{entry['password']}\n")
+                        except Exception as txt_error:
+                            self.log_progress(f"Khong ghi duoc clonedie.txt: {txt_error}", Fore.YELLOW)
+
                         if added_new:
                             self.log_progress(" Thêm tài khoản Bị khóa clonedie.js.", Fore.GREEN)
                         else:
@@ -390,7 +455,7 @@ class GarenaAccountChecker:
                 return True, "Đăng nhập thành công"
 
             self.log_progress("URL không đổi sau đăng nhập - đăng nhập thất bại.", Fore.RED)
-            return False, "Đăng nhập thất bại (không rõ lý do)"
+            return False, "Bị block hoặc gặp captcha"
 
         except TimeoutException:
             self.log_progress("Quá thời gian chờ tải trang.", Fore.RED)
@@ -409,6 +474,7 @@ class GarenaAccountChecker:
         invalid_file = "cloneunpass.txt"
         notcheck_file = "notcheck.txt"
 
+        self.reset_output_files(output_file, valid_file, invalid_file, notcheck_file)
         self.ensure_output_file(output_file)
 
         try:
@@ -493,12 +559,18 @@ class GarenaAccountChecker:
                         self.valid += 1
                         with open(valid_file, "a", encoding="utf-8") as f:
                             f.write(f'{{"username": "{email}", "password": "{password}" }},\n')
+                        try:
+                            with open("clonepass.txt", "a", encoding="utf-8") as txt_file:
+                                txt_file.write(f"{email}:{password}\n")
+                        except Exception as txt_error:
+                            self.log_progress(f"Khong ghi duoc clonepass.txt: {txt_error}", Fore.YELLOW)
                         self.log_progress(
                             f"[{display_idx}/{total}] {email} hợp lệ - đã ghi vào {valid_file}.",
                             Fore.GREEN
                         )
                         with open(output_file, "a", encoding="utf-8") as f:
                             f.write(f"{email}  ||  {password}  ||  VALID  ||  {message}\n")
+                        self.remove_account_from_source(email, password, input_file)
                         self.checked += 1
                         invalid_streak.clear()
 
@@ -514,6 +586,7 @@ class GarenaAccountChecker:
                             )
                             with open(output_file, "a", encoding="utf-8") as f:
                                 f.write(f"{email}  ||  {password}  ||  UNPASS  ||  {message}\n")
+                            self.remove_account_from_source(email, password, input_file)
                             self.checked += 1
                             invalid_streak.clear()
 
