@@ -7,13 +7,6 @@ import threading
 import subprocess
 import socket
 import unicodedata
-import tempfile
-import urllib.request
-import base64
-import re
-from urllib.error import URLError
-from urllib.parse import urljoin, unquote_to_bytes
-
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -21,21 +14,10 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.action_chains import ActionChains
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.options import Options
 from colorama import init, Fore, Style
-from softether_switch import SoftEtherVpnSwitcher
 
-try:
-    import cv2
-except ImportError:
-    cv2 = None
-
-try:
-    import numpy as np
-except ImportError:
-    np = None
 # Khởi tạo colorama
 init(autoreset=True)
 
@@ -48,37 +30,12 @@ class GarenaAccountChecker:
         self.clonelive_added = 0
         self.total_accounts = 0
         self.clonelive_total_current = 0
-        self._output_files_initialized = False
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.vpn_state_base = os.environ.get(
-            "VPN_STATE_DIR",
-            os.path.join(base_dir, "SoftEtherVPN")
-        )
-        self.vpn_account_name = os.environ.get("VPN_ACCOUNT_NAME", "AutoVPN")
-        self.vpn_nic_name = os.environ.get("VPN_NIC_NAME", "VPN")
-        preferred_raw = os.environ.get("VPN_PREFERRED_COUNTRIES")
-        default_preferred = ["VN", "TH", "KR"]
-        parsed_preferred = []
-        if preferred_raw:
-            parsed_preferred = [
-                entry.strip().upper()
-                for entry in preferred_raw.split(",")
-                if entry.strip()
-            ]
-        if parsed_preferred:
-            self.preferred_vpn_countries = list(dict.fromkeys(parsed_preferred))
-        else:
-            self.preferred_vpn_countries = default_preferred[:]
-        try:
-            self.vpn_switch_attempts = max(1, int(os.environ.get("VPN_MAX_SWITCH_ATTEMPTS", "5")))
-        except ValueError:
-            self.vpn_switch_attempts = 5
-        try:
-            self.vpn_switch_candidates = max(1, int(os.environ.get("VPN_MAX_SWITCH_CANDIDATES", "20")))
-        except ValueError:
-            self.vpn_switch_candidates = 20
-        self._vpn_switcher = None
+        self.vpn_executable = os.path.abspath(os.environ.get(
+            "VPN_AUTO_SWITCH_EXEC",
+            os.path.join(base_dir, "vpngate-client", "Chạy file này.exe")
+        ))
         env_flag = os.environ.get("VPN_AUTO_SWITCH_ENABLED")
         self.enable_auto_vpn = True
         if env_flag:
@@ -88,134 +45,6 @@ class GarenaAccountChecker:
         self.vpn_ip_check_interval = 0.5
         self.vpn_stabilize_delay = 5
         self._vpn_warning_shown = False
-
-        self.slider_solver_enabled = os.environ.get("SLIDER_SOLVER_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
-        self.slider_background_selectors = self._parse_selector_env(
-            "SLIDER_BG_SELECTORS",
-            [
-                "#captcha__puzzle canvas:not(.block)",
-                "#captcha__puzzle canvas:nth-of-type(1)",
-                "canvas.geetest_canvas_bg",
-                "canvas.geetest_canvas_fullbg",
-                "[class*='geetest_canvas_bg']",
-                "[class*='geetest_canvas_fullbg']",
-                "[class*='gt_cut_fullbg']",
-                "img.background",
-                "img[class*='background']",
-                "img[src*='background']",
-                "img[src*='bg']",
-            ],
-        )
-        self.slider_piece_selectors = self._parse_selector_env(
-            "SLIDER_PIECE_SELECTORS",
-            [
-                "#captcha__puzzle canvas.block",
-                "#captcha__puzzle canvas:nth-of-type(2)",
-                "canvas.geetest_canvas_slice",
-                "[class*='geetest_canvas_slice']",
-                "[class*='slider-piece']",
-                "[class*='slider_slice']",
-                "img.piece",
-                "img[class*='piece']",
-                "img[src*='piece']",
-                "img[src*='slice']",
-            ],
-        )
-        self.slider_knob_selectors = self._parse_selector_env(
-            "SLIDER_KNOB_SELECTORS",
-            [
-                "#captcha__frame .slider",
-                "#captcha__frame .sliderIcon",
-                "#captcha__frame .sliderbg",
-                ".slider",
-                ".slider-knob",
-                ".slider-handle",
-                ".sliderIcon",
-                ".sliderbg",
-                ".geetest_slider_button",
-                ".gt_slider_knob",
-                ".gt_slider_button",
-                "[class*='slider_button']",
-                "[class*='slider-btn']",
-                "[class*='handler']",
-                "[class*='slider']",
-            ],
-        )
-        self.slider_frame_selectors = self._parse_selector_env(
-            "SLIDER_FRAME_SELECTORS",
-            [
-                "#captcha__frame",
-                "[id*='captcha__frame']",
-                ".captcha-frame",
-                "div[id*='captcha'][class*='frame']",
-            ],
-        )
-        try:
-            self.slider_offset_adjust = float(os.environ.get("SLIDER_OFFSET_ADJUST", "0"))
-        except ValueError:
-            self.slider_offset_adjust = 0.0
-        self._slider_solver_ready = cv2 is not None and np is not None
-        try:
-            self.slider_element_wait_timeout = float(os.environ.get("SLIDER_ELEMENT_WAIT", "6"))
-        except ValueError:
-            self.slider_element_wait_timeout = 6.0
-        if self.slider_element_wait_timeout < 0:
-            self.slider_element_wait_timeout = 0.0
-        try:
-            self.slider_element_retry_interval = float(os.environ.get("SLIDER_ELEMENT_RETRY", "0.3"))
-        except ValueError:
-            self.slider_element_retry_interval = 0.3
-        if self.slider_element_retry_interval <= 0:
-            self.slider_element_retry_interval = 0.3
-        template_env = os.environ.get("SLIDER_TEMPLATE_PATH")
-        if template_env:
-            candidate = template_env.strip().strip('"').strip("'")
-            if candidate:
-                if not os.path.isabs(candidate):
-                    candidate = os.path.join(base_dir, candidate)
-                self.slider_template_path = os.path.abspath(candidate)
-            else:
-                self.slider_template_path = None
-        else:
-            template_candidates = [
-                "slider_template.png",
-                "captcha_template.png",
-                "t?i xu?ng (1).png",
-                "tai xuong (1).png",
-            ]
-            resolved_template = None
-            for candidate_name in template_candidates:
-                candidate_path = os.path.join(base_dir, candidate_name)
-                if os.path.isfile(candidate_path):
-                    resolved_template = os.path.abspath(candidate_path)
-                    break
-            self.slider_template_path = resolved_template
-            if self.slider_template_path is None:
-                try:
-                    for entry_name in os.listdir(base_dir):
-                        if not entry_name.lower().endswith('.png'):
-                            continue
-                        normalized = unicodedata.normalize('NFKD', entry_name).encode('ascii', 'ignore').decode('ascii', 'ignore')
-                        if 'tai' in normalized and 'xuong' in normalized:
-                            self.slider_template_path = os.path.abspath(os.path.join(base_dir, entry_name))
-                            break
-                except Exception:
-                    pass
-        try:
-            self.slider_template_threshold = float(os.environ.get("SLIDER_TEMPLATE_THRESHOLD", "0.65"))
-        except ValueError:
-            self.slider_template_threshold = 0.65
-        if not (0 < self.slider_template_threshold < 1):
-            self.slider_template_threshold = 0.65
-        try:
-            self.slider_template_match_count = max(2, int(os.environ.get("SLIDER_TEMPLATE_MATCH_COUNT", "2")))
-        except ValueError:
-            self.slider_template_match_count = 2
-
-        try:
-            self.slider_retry_attempts = max(0, int(os.environ.get("SLIDER_RETRY_ATTEMPTS", "1")))
-        except ValueError:
-            self.slider_retry_attempts = 1
 
         self._chromedriver_binary_path = None
         self._chromedriver_reuse_logged = False
@@ -304,340 +133,46 @@ class GarenaAccountChecker:
                 return None
             time.sleep(check_interval)
 
-    def detect_slider_captcha(self, driver, page_source=None):
-        """Return True if a slider or puzzle captcha is present."""
-        try:
-            driver.switch_to.default_content()
-        except Exception:
-            pass
-
-        if page_source is None:
-            try:
-                page_source = driver.page_source
-            except Exception:
-                page_source = ""
-
-        lower_page = (page_source or "").lower()
-        slider_markers = [
-            "slidercaptcha",
-            "drag the slider",
-            "drag to verify",
-            "drag slider",
-            "match the puzzle",
-            "complete the puzzle",
-            "puzzle captcha",
-            "captcha.garena",
-            "captcha-slider",
-            "slide to continue",
-            "please slide",
-            "keo thanh",
-            "keo tha",
-            "ghep hinh",
-            "geetest"
-        ]
-
-        if any(marker in lower_page for marker in slider_markers):
-            return True
-
-        try:
-            elements = driver.find_elements(
-                By.CSS_SELECTOR,
-                "[class*='slider'], [class*='captcha'], [id*='slider'], [id*='captcha']"
-            )
-        except Exception:
-            elements = []
-
-        for element in elements:
-            try:
-                if not element.is_displayed():
-                    continue
-            except Exception:
-                continue
-
-            snippets = " ".join(
-                filter(
-                    None,
-                    [
-                        (element.text or "").lower(),
-                        (element.get_attribute("class") or "").lower(),
-                        (element.get_attribute("aria-label") or "").lower(),
-                        (element.get_attribute("role") or "").lower(),
-                    ],
-                )
-            )
-
-            if ("captcha" in snippets or "garena" in snippets) and any(
-                token in snippets for token in ["drag", "slider", "puzzle", "keo", "ghep"]
-            ):
-                return True
-
-        try:
-            frames = driver.find_elements(By.TAG_NAME, "iframe")
-        except Exception:
-            frames = []
-
-        for frame in frames:
-            try:
-                src = (frame.get_attribute("src") or "").lower()
-            except Exception:
-                src = ""
-            if any(keyword in src for keyword in ["captcha", "slider", "geetest", "puzzle"]):
-                return True
-
-        return False
-
-    def _parse_selector_env(self, env_key, defaults):
-        raw_value = os.environ.get(env_key)
-        if not raw_value:
-            return list(defaults)
-        selectors = [item.strip() for item in raw_value.split(",")]
-        return [selector for selector in selectors if selector]
-
-    def _find_element_by_selectors(self, driver, selectors):
-        fallback = None
-        for selector in selectors:
-            selector = selector.strip()
-            if not selector:
-                continue
-            try:
-                if selector.startswith("//"):
-                    element = driver.find_element(By.XPATH, selector)
-                else:
-                    element = driver.find_element(By.CSS_SELECTOR, selector)
-            except Exception:
-                continue
-
-            if element and fallback is None:
-                fallback = element
-            if not element:
-                continue
-            try:
-                if element.is_displayed():
-                    return element
-            except Exception:
-                continue
-        return fallback
-
-    def _extract_css_url(self, css_value):
-        if not css_value:
-            return None
-        match = re.search(r"url\(([^)]+)\)", css_value)
-        if not match:
-            return None
-        candidate = match.group(1).strip()
-        candidate = candidate.strip("'")
-        candidate = candidate.strip('"')
-        if not candidate or candidate.lower() == "none":
-            return None
-        return candidate
-    def _decode_data_url(self, data_url):
-        if not data_url or not data_url.startswith("data:"):
-            return None
-        header, _, payload = data_url.partition(",")
-        if not payload:
-            return None
-        try:
-            if "base64" in header:
-                return base64.b64decode(payload)
-            return unquote_to_bytes(payload)
-        except Exception:
-            return None
-
-    def _write_bytes_to_tempfile(self, data, suffix):
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        temp_file.close()
-        with open(temp_file.name, "wb") as handle:
-            handle.write(data)
-        return temp_file.name
-
-    def _screenshot_slider_element(self, element, suffix):
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        temp_file.close()
-        try:
-            element.screenshot(temp_file.name)
-            return temp_file.name
-        except Exception:
-            try:
-                os.remove(temp_file.name)
-            except OSError:
-                pass
-            return None
-
-    def _download_slider_image(self, driver, element, suffix):
-        if element is None:
-            return None
-
-        sources = []
-        attribute_candidates = (
-            "src",
-            "data-src",
-            "data-background",
-            "data-bg",
-            "data-lazy-src",
-            "data-original",
-            "data-url",
-            "data-img",
-        )
-        for attr in attribute_candidates:
-            value = (element.get_attribute(attr) or "").strip()
-            if value and value not in sources:
-                sources.append(value)
-
-        style_url = self._extract_css_url(element.get_attribute("style"))
-        if style_url and style_url not in sources:
-            sources.append(style_url)
-
-        if driver:
-            try:
-                computed_style = driver.execute_script(
-                    "try { return window.getComputedStyle(arguments[0]).backgroundImage; } catch (e) { return null; }",
-                    element,
-                )
-            except Exception:
-                computed_style = None
-            computed_url = self._extract_css_url(computed_style)
-            if computed_url and computed_url not in sources:
-                sources.append(computed_url)
-
-        tag_name = ""
-        try:
-            tag_name = (element.tag_name or "").lower()
-        except Exception:
-            pass
-
-        if driver and tag_name == "canvas":
-            try:
-                data_url = driver.execute_script(
-                    "try { return arguments[0].toDataURL('image/png'); } catch (e) { return null; }",
-                    element,
-                )
-            except Exception:
-                data_url = None
-            if data_url:
-                data_bytes = self._decode_data_url(data_url)
-                if data_bytes:
-                    try:
-                        return self._write_bytes_to_tempfile(data_bytes, suffix)
-                    except Exception as exc:
-                        self.log_progress(f"Khong the luu anh captcha tu canvas: {exc}", Fore.YELLOW)
-
-        user_agent = "Mozilla/5.0"
-        cookies_header = None
-        if driver:
-            try:
-                ua = driver.execute_script("return navigator.userAgent;")
-                if ua:
-                    user_agent = ua
-            except Exception:
-                pass
-
-            try:
-                cookie_pairs = []
-                for cookie in driver.get_cookies():
-                    name = cookie.get("name")
-                    value = cookie.get("value")
-                    if name and value:
-                        cookie_pairs.append(f"{name}={value}")
-                if cookie_pairs:
-                    cookies_header = "; ".join(cookie_pairs)
-            except Exception:
-                cookies_header = None
-
-        for source in sources:
-            if not source or source.lower() == "none":
-                continue
-
-            if source.startswith("data:"):
-                data_bytes = self._decode_data_url(source)
-                if data_bytes:
-                    try:
-                        return self._write_bytes_to_tempfile(data_bytes, suffix)
-                    except Exception as exc:
-                        self.log_progress(f"Khong the luu anh captcha tu data URL: {exc}", Fore.YELLOW)
-                continue
-
-            normalized = source
-            if normalized.startswith("//"):
-                scheme = "https:" if driver and driver.current_url.startswith("https") else "http:"
-                normalized = f"{scheme}{normalized}"
-
-            try:
-                base_url = driver.current_url if driver else ""
-            except Exception:
-                base_url = ""
-
-            target_url = urljoin(base_url, normalized)
-            headers = {"User-Agent": user_agent}
-            if cookies_header:
-                headers["Cookie"] = cookies_header
-
-            try:
-                request = urllib.request.Request(target_url, headers=headers)
-                with urllib.request.urlopen(request, timeout=15) as response:
-                    data = response.read()
-                if data:
-                    return self._write_bytes_to_tempfile(data, suffix)
-            except URLError as exc:
-                self.log_progress(f"Khong the tai hinh captcha tu {target_url}: {exc}", Fore.YELLOW)
-            except Exception as exc:
-                self.log_progress(f"Loi khi tai hinh captcha tu {target_url}: {exc}", Fore.YELLOW)
-
-        fallback_path = self._screenshot_slider_element(element, suffix)
-        if fallback_path:
-            self.log_progress(
-                "Su dung anh chup element lam du lieu captcha (fallback).",
-                Fore.CYAN,
-            )
-        return fallback_path
-
-
-
-
-
     def auto_switch_vpn(self):
         """Attempt to trigger VPN rotation automatically."""
         if not self.enable_auto_vpn:
             return False
 
-        original_ip = self.get_current_ip()
-
-        if self._vpn_switcher is None:
-            def _switcher_logger(message, color=None):
-                if color is None:
-                    self.log_progress(message)
-                else:
-                    self.log_progress(message, color)
-
-            try:
-                self._vpn_switcher = SoftEtherVpnSwitcher(
-                    base_dir=self.vpn_state_base,
-                    account_name=self.vpn_account_name,
-                    nic_name=self.vpn_nic_name,
-                    preferred_countries=self.preferred_vpn_countries,
-                    logger=_switcher_logger,
-                    max_candidates=self.vpn_switch_candidates,
-                    max_attempts=self.vpn_switch_attempts,
-                )
-            except Exception as exc:
+        if not os.path.isfile(self.vpn_executable):
+            if not self._vpn_warning_shown:
                 self.log_progress(
-                    f"Khong the khoi tao bo doi SoftEther: {exc}",
-                    Fore.YELLOW
-                )
-                self.enable_auto_vpn = False
-                return False
-
-        if not self._vpn_switcher.switch():
-            if (
-                self._vpn_switcher
-                and self._vpn_switcher.vpncmd_path is None
-                and not self._vpn_warning_shown
-            ):
-                self.log_progress(
-                    "Khong tim thay vpncmd.exe de doi VPN tu dong. Vui long cai dat SoftEther VPN Client hoac dat VPNCMD_PATH.",
+                    f"Khong tim thay file doi VPN tai: {self.vpn_executable}",
                     Fore.YELLOW
                 )
                 self._vpn_warning_shown = True
-                self.enable_auto_vpn = False
+            self.enable_auto_vpn = False
+            return False
+
+        original_ip = self.get_current_ip()
+        self.log_progress("Dang kich hoat doi VPN tu dong...", Fore.YELLOW)
+        try:
+            subprocess.run(
+                [self.vpn_executable],
+                cwd=os.path.dirname(self.vpn_executable),
+                check=False,
+                timeout=self.vpn_command_timeout
+            )
+        except FileNotFoundError:
+            if not self._vpn_warning_shown:
+                self.log_progress(
+                    f"Khong the chay chuong trinh doi VPN: {self.vpn_executable}",
+                    Fore.RED
+                )
+                self._vpn_warning_shown = True
+            self.enable_auto_vpn = False
+            return False
+        except subprocess.TimeoutExpired:
+            self.log_progress(
+                f"Chuong trinh doi VPN chua ket thuc sau {self.vpn_command_timeout} giay - tiep tuc cho IP moi...",
+                Fore.YELLOW
+            )
+        except Exception as exc:
+            self.log_progress(f"Loi khi doi VPN: {exc}", Fore.RED)
             return False
 
         new_ip = self.wait_for_ip_change(
@@ -646,7 +181,7 @@ class GarenaAccountChecker:
             timeout=self.vpn_ip_change_timeout
         )
         if not new_ip:
-            self.log_progress("Khong phat hien IP moi sau khi doi VPN tu dong.", Fore.YELLOW)
+            self.log_progress("Khong phat hien IP moi sau khi doi VPN tu dong.", Fore.RED)
             return False
 
         if self.vpn_stabilize_delay > 0:
@@ -794,16 +329,6 @@ class GarenaAccountChecker:
             self.log_progress(f"Khong the xoa {email} khoi {file_path}: {e}", Fore.YELLOW)
 
 
-    def reset_runtime_stats(self):
-        """Lam moi cac bien dem trong bo nho cho mot lan xu ly moi."""
-        self.results.clear()
-        self.checked = 0
-        self.valid = 0
-        self.invalid = 0
-        self.clonelive_added = 0
-        self.clonelive_total_current = 0
-        self.total_accounts = 0
-
     def reset_output_files(self, output_file, valid_file, invalid_file, notcheck_file):
         """Dat lai cac file ket qua truoc khi bat dau mot lan kiem tra moi."""
         self.log_progress("Dang reset cac file ket qua cu.", Fore.YELLOW)
@@ -829,8 +354,14 @@ class GarenaAccountChecker:
                     f.write(content)
             except Exception as reset_error:
                 self.log_progress(f"Khong the reset {path_value}: {reset_error}", Fore.YELLOW)
-        self.reset_runtime_stats()
-        self._output_files_initialized = True
+        self.results.clear()
+        self.checked = 0
+        self.valid = 0
+        self.invalid = 0
+        self.clonelive_added = 0
+        self.clonelive_total_current = 0
+        self.total_accounts = 0
+
 
     def check_account(self, email, password):
         """Kiểm tra một tài khoản Garena"""
@@ -893,23 +424,10 @@ class GarenaAccountChecker:
             self.log_progress("Đang chờ phản hồi đăng nhập...", Fore.CYAN)
             time.sleep(6)
 
-            page_source = driver.page_source
-            if self.detect_slider_captcha(driver, page_source):
-                self.log_progress("Phat hien captcha keo ghep hinh (slider).", Fore.YELLOW)
-                return False, "INVALID"
-            if "Login Now" in page_source and "As a security measure, you will be automatically redirected to the Garena Account Center" in page_source:
-                self.log_progress("Phat hien thong bao tu dong chuyen huong, doi them 8 giay...", Fore.YELLOW)
-                time.sleep(8)
-
-            self.log_progress("Cho them 4 giay truoc khi kiem tra URL...", Fore.CYAN)
-            time.sleep(4)
             after_login_url = driver.current_url
             self.log_progress(f"URL sau đăng nhập: {after_login_url}", Fore.CYAN)
 
             current_url_lower = after_login_url.lower()
-            if self.detect_slider_captcha(driver):
-                self.log_progress("Phat hien captcha keo ghep hinh sau khi dang nhap.", Fore.YELLOW)
-                return False, "INVALID"
             if "blog" in current_url_lower:
                 self.log_progress("Bị chuyển hướng sang blog - tài khoản bị chặn.", Fore.RED)
                 return False, "Tài khoản bị chặn (blog)"
@@ -1110,11 +628,7 @@ class GarenaAccountChecker:
 
         notcheck_file = "notcheck.txt"
 
-        if not self._output_files_initialized:
-            self.reset_output_files(output_file, valid_file, invalid_file, notcheck_file)
-        else:
-            self.reset_runtime_stats()
-            self.log_progress("Bo qua buoc reset ket qua, giu lai du lieu hien tai.", Fore.YELLOW)
+        self.reset_output_files(output_file, valid_file, invalid_file, notcheck_file)
 
         self.ensure_output_file(output_file)
 
@@ -1778,11 +1292,3 @@ if __name__ == "__main__":
         print(f"\n{Fore.RED}Đã dừng chương trình do người dùng yêu cầu.{Style.RESET_ALL}")
     except Exception as e:
         print(f"\n{Fore.RED}Có lỗi không mong muốn: {str(e)}{Style.RESET_ALL}")
-
-
-
-
-
-
-
-
