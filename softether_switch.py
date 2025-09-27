@@ -57,7 +57,7 @@ class SoftEtherVpnSwitcher:
         vpncmd_path: Optional[str] = None,
         state_filename: str = "auto_switch_state.json",
         max_candidates: int = 20,
-        max_attempts: int = 5,
+        max_attempts: int = 0,
     ) -> None:
         self.base_dir = os.path.abspath(base_dir)
         os.makedirs(self.base_dir, exist_ok=True)
@@ -68,7 +68,7 @@ class SoftEtherVpnSwitcher:
         self.logger = logger or (lambda message, color=None: None)
         self.state_path = os.path.join(self.base_dir, state_filename)
         self.max_candidates = max(1, max_candidates)
-        self.max_attempts = max(1, max_attempts)
+        self.max_attempts = max_attempts if max_attempts > 0 else 0
 
         self.vpncmd_path = self._resolve_vpncmd_path(vpncmd_path)
         self.last_state = self._load_state()
@@ -92,7 +92,7 @@ class SoftEtherVpnSwitcher:
         ordered = self._prioritize_servers(candidates)
         attempts = 0
         for server in ordered:
-            if attempts >= self.max_attempts:
+            if self.max_attempts > 0 and attempts >= self.max_attempts:
                 break
             attempts += 1
             if self._try_connect(server):

@@ -58,7 +58,7 @@ class GarenaAccountChecker:
         self.vpn_account_name = os.environ.get("VPN_ACCOUNT_NAME", "AutoVPN")
         self.vpn_nic_name = os.environ.get("VPN_NIC_NAME", "VPN")
         preferred_raw = os.environ.get("VPN_PREFERRED_COUNTRIES")
-        default_preferred = ["VN", "TH", "KR"]
+        default_preferred = ["VN", "TH", "KR", "JP", "US"]
         parsed_preferred = []
         if preferred_raw:
             parsed_preferred = [
@@ -71,11 +71,12 @@ class GarenaAccountChecker:
         else:
             self.preferred_vpn_countries = default_preferred[:]
         try:
-            self.vpn_switch_attempts = max(1, int(os.environ.get("VPN_MAX_SWITCH_ATTEMPTS", "5")))
+            parsed_attempts = int(os.environ.get("VPN_MAX_SWITCH_ATTEMPTS", "0"))
+            self.vpn_switch_attempts = parsed_attempts if parsed_attempts >= 0 else 0
         except ValueError:
-            self.vpn_switch_attempts = 5
+            self.vpn_switch_attempts = 0
         try:
-            self.vpn_switch_candidates = max(1, int(os.environ.get("VPN_MAX_SWITCH_CANDIDATES", "20")))
+            self.vpn_switch_candidates = max(1, int(os.environ.get("VPN_MAX_SWITCH_CANDIDATES", "200")))
         except ValueError:
             self.vpn_switch_candidates = 20
         self._vpn_switcher = None
@@ -894,15 +895,28 @@ class GarenaAccountChecker:
             time.sleep(6)
 
             page_source = driver.page_source
+            page_source_lower = page_source.lower()
+            page_source_normalized = self.normalize_text(page_source)
+            banned_keywords = (
+                "user has been banned",
+                "tai khoan da bi khoa",
+                "tai khoan nay da bi cam",
+            )
             if self.detect_slider_captcha(driver, page_source):
                 self.log_progress("Phat hien captcha keo ghep hinh (slider).", Fore.YELLOW)
                 return False, "INVALID"
             if "Login Now" in page_source and "As a security measure, you will be automatically redirected to the Garena Account Center" in page_source:
-                self.log_progress("Phat hien thong bao tu dong chuyen huong, doi them 8 giay...", Fore.YELLOW)
-                time.sleep(8)
-
-            self.log_progress("Cho them 4 giay truoc khi kiem tra URL...", Fore.CYAN)
-            time.sleep(4)
+                self.log_progress(
+                    "Phat hien thong bao tu dong chuyen huong - tai khoan bi chan boi Garena.",
+                    Fore.RED
+                )
+                return False, "BAN_GARENA"
+            if (
+                any(keyword in page_source_lower for keyword in banned_keywords)
+                or any(keyword in page_source_normalized for keyword in banned_keywords)
+            ):
+                self.log_progress("T\u00e0i kho\u1ea3n b\u1ecb kh\u00f3a ho\u1eb7c b\u1ecb c\u1ea5m.", Fore.RED)
+                return False, "T\u00e0i kho\u1ea3n b\u1ecb kh\u00f3a"
             after_login_url = driver.current_url
             self.log_progress(f"URL sau đăng nhập: {after_login_url}", Fore.CYAN)
 
@@ -932,15 +946,19 @@ class GarenaAccountChecker:
                 if error_div.is_displayed():
                     error_text = error_div.text.strip()
                     lower_error = error_text.lower()
+                    normalized_error = self.normalize_text(error_text)
+                    if (
+                        any(keyword in lower_error for keyword in banned_keywords)
+                        or any(keyword in normalized_error for keyword in banned_keywords)
+                    ):
+                        self.log_progress("T\u00e0i kho\u1ea3n b\u1ecb kh\u00f3a ho\u1eb7c b\u1ecb c\u1ea5m.", Fore.RED)
+                        return False, "T\u00e0i kho\u1ea3n b\u1ecb kh\u00f3a"
                     if "sai tên tài khoản hoặc mật khẩu" in lower_error or "username or password is incorrect." in lower_error:
                         self.log_progress("Sai mật khẩu.", Fore.YELLOW)
                         return False, "SAI_PASS"
                     if "chưa xác định lỗi sai" in lower_error or "an unknown error occured." in lower_error:
                         self.log_progress("Lỗi mạng hoặc lỗi không xác định.", Fore.YELLOW)
                         return False, "NOT_INTERNET"
-                    if "user has been banned" in lower_error or "tài khoản đã bị khóa" in lower_error:
-                        self.log_progress("Tài khoản bị khóa.", Fore.RED)
-                        return False, "Tài khoản bị khóa"
                     self.log_progress(f"Lỗi khác: {error_text}", Fore.YELLOW)
                     return False, f"Lỗi: {error_text}"
             except NoSuchElementException:
@@ -1102,7 +1120,7 @@ class GarenaAccountChecker:
 
         """Xu ly danh sach tai khoan va ghi truc tiep vao cac file sau moi lan kiem tra"""
 
-        self.log_progress("Chuan bi cac file ket qua de ghi du lieu.", Fore.YELLOW)
+        self.log_progress("Chuẩn bị các file kết quả để ghi dữ liệu.", Fore.YELLOW)
 
         valid_file = "clonepass.js"
 
@@ -1114,7 +1132,7 @@ class GarenaAccountChecker:
             self.reset_output_files(output_file, valid_file, invalid_file, notcheck_file)
         else:
             self.reset_runtime_stats()
-            self.log_progress("Bo qua buoc reset ket qua, giu lai du lieu hien tai.", Fore.YELLOW)
+            self.log_progress("Bỏ qua bước reset kết quả, giữ lại dữ liệu hiện tại.", Fore.YELLOW)
 
         self.ensure_output_file(output_file)
 
@@ -1156,7 +1174,7 @@ class GarenaAccountChecker:
 
             except FileNotFoundError:
 
-                self.log_progress(f"Khong tim thay file {input_file}.", Fore.RED)
+                self.log_progress(f"Không tìm thấy file {input_file}.", Fore.RED)
 
                 return []
 
@@ -1176,7 +1194,7 @@ class GarenaAccountChecker:
 
                         self.log_progress(
 
-                            f"Khong tim thay tai khoan hop le nao trong {input_file}.",
+                            f"Không tim thấy tài khoản hợp lệ trong {input_file}.",
 
                             Fore.YELLOW
 
@@ -1186,7 +1204,7 @@ class GarenaAccountChecker:
 
                         self.log_progress(
 
-                            "Khong con tai khoan nao trong accounts.txt. Ket thuc vong lap.",
+                            "Không còn tài khoản nào để kiểm tra, kết thúc chương trình.",
 
                             Fore.GREEN
 
@@ -1214,19 +1232,19 @@ class GarenaAccountChecker:
 
                     self.log_progress(
 
-                        f"Da tim thay {total} tai khoan de kiem tra tu {input_file}.",
+                        f"Đã tìm thấy {total} tài khoản để kiểm tra từ {input_file}.",
 
                         Fore.CYAN
 
                     )
 
-                    print(f"{Fore.YELLOW}Dang bat dau kiem tra...{Style.RESET_ALL}\n")
+                    print(f"{Fore.YELLOW}Đang bắt đầu kiểm tra...{Style.RESET_ALL}\n")
 
                 else:
 
                     self.log_progress(
 
-                        f"Luot kiem tra thu {pass_counter}: {total} tai khoan con lai se duoc thu lai.",
+                        f"Lượt kiểm tra thứ {pass_counter}: {total} tài khoản sẽ được thử lại.",
 
                         Fore.CYAN
 
@@ -1250,7 +1268,7 @@ class GarenaAccountChecker:
 
                     self.log_progress(
 
-                        f"Dang ghi {len(pending_invalid_records)} tai khoan INVALID dang cho.",
+                        f"Đang ghi {len(pending_invalid_records)} tài khoản INVALID đang chờ.",
 
                         Fore.MAGENTA
 
@@ -1278,7 +1296,7 @@ class GarenaAccountChecker:
 
                         self.log_progress(
 
-                            f"Da cap nhat trang thai INVALID cho {email}.",
+                            f"Cập nhật trạng thái INVALID cho {email}.",
 
                             Fore.MAGENTA
 
@@ -1306,7 +1324,7 @@ class GarenaAccountChecker:
 
                         self.log_progress(
 
-                            f"[{display_idx}/{total}] Bo qua dong khong hop le: {':'.join(account)}",
+                            f"[{display_idx}/{total}] Bỏ qua tài khoản không hợp lệ: {':'.join(account)}",
 
                             Fore.YELLOW
 
@@ -1318,7 +1336,7 @@ class GarenaAccountChecker:
 
                         with open(output_file, "a", encoding="utf-8") as f:
 
-                            f.write(f"{account[0]}  ||  {account[1]}  ||  INVALID  ||  Du lieu khong hop le\n")
+                            f.write(f"{account[0]}  ||  {account[1]}  ||  INVALID  ||  Dữ liệu không hợp lệ\n")
 
                         self.invalid += 1
 
@@ -1336,7 +1354,7 @@ class GarenaAccountChecker:
 
                     self.log_progress(
 
-                        f"[{display_idx}/{total}] Bat dau kiem tra tai khoan {email}",
+                        f"[{display_idx}/{total}] Bắt đầu kiểm tra tài khoản {email}",
 
                         Fore.CYAN
 
@@ -1368,11 +1386,11 @@ class GarenaAccountChecker:
 
                             except Exception as txt_error:
 
-                                self.log_progress(f"Khong ghi duoc clonepass.txt: {txt_error}", Fore.YELLOW)
+                                self.log_progress(f"Không ghi được clonepass.txt: {txt_error}", Fore.YELLOW)
 
                             self.log_progress(
 
-                                f"[{display_idx}/{total}] {email} hop le - da ghi vao {valid_file}.",
+                                f"[{display_idx}/{total}] {email} hợp lệ - đã ghi vào {valid_file}.",
 
                                 Fore.GREEN
 
@@ -1404,7 +1422,7 @@ class GarenaAccountChecker:
 
                                 self.log_progress(
 
-                                    f"[{display_idx}/{total}] {email} sai mat khau - da ghi vao {invalid_file}.",
+                                    f"[{display_idx}/{total}] {email} sai mật khẩu  - đã ghi vào {invalid_file}.",
 
                                     Fore.YELLOW
 
@@ -1422,6 +1440,42 @@ class GarenaAccountChecker:
 
 
 
+                            elif message == "BAN_GARENA":
+
+                                flush_pending_invalid()
+
+                                self.invalid += 1
+
+                                self.remove_account_from_source(email, password, input_file)
+
+                                self.log_progress(
+
+                                    f"[{display_idx}/{total}] {email} bị Garena cấm - đã ghi trạng thái BAN_GARENA.",
+
+                                    Fore.RED
+
+                                )
+
+                                with open(output_file, "a", encoding="utf-8") as f:
+
+                                    f.write(f"{email}  ||  {password}  ||  BAN_GARENA  ||  Garena thông báo tự động chuyển hướng\n")
+
+                                self.checked += 1
+
+                                invalid_streak.clear()
+
+                            elif message == "T\u00e0i kho\u1ea3n b\u1ecb kh\u00f3a":
+                                flush_pending_invalid()
+                                self.invalid += 1
+                                self.remove_account_from_source(email, password, input_file)
+                                self.log_progress(
+                                    f"[{display_idx}/{total}] {email} B\u1ecb kh\u00f3a - X\u00f3a kh\u1ecfi accounts.txt.",
+                                    Fore.RED
+                                )
+                                with open(output_file, "a", encoding="utf-8") as f:
+                                    f.write(f"{email}  ||  {password}  ||  ACCOUNT_LOCKED  ||  T\u00e0i kho\u1ea3n b\u1ecb kh\u00f3a\n")
+                                self.checked += 1
+                                invalid_streak.clear()
                             elif message == "NOT_INTERNET":
 
                                 flush_pending_invalid()
@@ -1434,7 +1488,7 @@ class GarenaAccountChecker:
 
                                 self.log_progress(
 
-                                    f"[{display_idx}/{total}] {email} gap loi mang - da ghi vao {notcheck_file}.",
+                                    f"[{display_idx}/{total}] {email} Gặp lỗi mạng - đã ghi vào {notcheck_file}.",
 
                                     Fore.YELLOW
 
@@ -1456,11 +1510,11 @@ class GarenaAccountChecker:
 
                                 with open(notcheck_file, "a", encoding="utf-8") as f:
 
-                                    f.write(f"{email}:{password}  ||  Khong load duoc du lieu\n")
+                                    f.write(f"{email}:{password}  ||  Không load được dữ liệu\n")
 
                                 self.log_progress(
 
-                                    f"[{display_idx}/{total}] {email} Khong load duoc du lieu - da ghi vao {notcheck_file}.",
+                                    f"[{display_idx}/{total}] {email} Không load được dữ liệu - đã ghi vào {notcheck_file}.",
 
                                     Fore.YELLOW
 
@@ -1468,7 +1522,7 @@ class GarenaAccountChecker:
 
                                 with open(output_file, "a", encoding="utf-8") as f:
 
-                                    f.write(f"{email}  ||  {password}  ||  INVALID  ||  Khong load duoc du lieu\n")
+                                    f.write(f"{email}  ||  {password}  ||  INVALID  ||  Không load được dữ liệu\n")
 
                                 self.checked += 1
 
@@ -1484,7 +1538,7 @@ class GarenaAccountChecker:
 
                                 self.log_progress(
 
-                                    f"[{display_idx}/{total}] {email} bi chan dang nhap - da xoa khoi accounts.txt.",
+                                    f"[{display_idx}/{total}] {email} bị chặn dăng nhập - đã xóa khỏi accounts.txt.",
 
                                     Fore.RED
 
@@ -1492,7 +1546,7 @@ class GarenaAccountChecker:
 
                                 with open(output_file, "a", encoding="utf-8") as f:
 
-                                    f.write(f"{email}  ||  {password}  ||  CANT_LOGIN  ||  Chan dang nhap\n")
+                                    f.write(f"{email}  ||  {password}  ||  CANT_LOGIN  ||  Chặn đăng nhập\n")
 
                                 self.checked += 1
 
@@ -1536,7 +1590,7 @@ class GarenaAccountChecker:
 
                                         self.log_progress(
 
-                                            "Phat hien 3 tai khoan INVALID lien tiep. Kich hoat quy trinh doi VPN.",
+                                            "Phát hiện 3 tài khoản INVALID liên tiếp. Kích hoạt quy trình đổi VPN.",
 
                                             Fore.RED
 
@@ -1558,7 +1612,7 @@ class GarenaAccountChecker:
 
                                             self.log_progress(
 
-                                                "Khong the doi VPN tu dong hoac che do tu dong dang tat. Chuyen sang doi thu cong.",
+                                                "Không thể đổi VPN. Chuyển sang đổi thủ công.",
 
                                                 Fore.YELLOW
 
@@ -1596,7 +1650,7 @@ class GarenaAccountChecker:
 
                                                 self.log_progress(
 
-                                                    f"Tiep tuc kiem tra sau khi IP thay doi thanh {new_ip}.",
+                                                    f"Tiếp tục kiểm tra, IP sau thay đổi thành {new_ip}.",
 
                                                     Fore.GREEN
 
@@ -1606,7 +1660,7 @@ class GarenaAccountChecker:
 
                                                 self.log_progress(
 
-                                                    "Tiep tuc kiem tra du khong xac dinh duoc IP moi.",
+                                                    "Tiếp tục kiểm tra dữ liệu dù không xác định được IP mới.",
 
                                                     Fore.YELLOW
 
@@ -1616,7 +1670,7 @@ class GarenaAccountChecker:
 
                                             self.log_progress(
 
-                                                "VPN da duoc doi tu dong, bat dau kiem tra lai.",
+                                                "VPN đã được đổi tự động, tiếp tục kiểm tra.",
 
                                                 Fore.GREEN
 
@@ -1624,7 +1678,7 @@ class GarenaAccountChecker:
 
                                         self.log_progress(
 
-                                            f"Quay lai kiem tra tu tai khoan thu {restart_index + 1}.",
+                                            f"Quay lại kiểm tra tài khoản thứ {restart_index + 1}.",
 
                                             Fore.YELLOW
 
@@ -1638,9 +1692,9 @@ class GarenaAccountChecker:
 
                         i += 1
 
-                        delay = random.uniform(3, 7)
+                        delay = random.uniform(3, 6)
 
-                        self.log_progress(f"Nghi {delay:.2f} giay truoc khi kiem tra tai khoan tiep theo.", Fore.YELLOW)
+                        self.log_progress(f"Nghỉ {delay:.2f} giây trước khi kiểm tra tài khoản tiếp theo.", Fore.YELLOW)
 
                         self.log_progress("", Fore.YELLOW)
 
@@ -1656,7 +1710,7 @@ class GarenaAccountChecker:
 
                         flush_pending_invalid()
 
-                        self.log_progress("Nguoi dung dung chuong trinh!", Fore.RED)
+                        self.log_progress("Người dùng dừng chương trình!", Fore.RED)
 
                         with open(notcheck_file, "a", encoding="utf-8") as f:
 
@@ -1664,7 +1718,7 @@ class GarenaAccountChecker:
 
                         with open(output_file, "a", encoding="utf-8") as f:
 
-                            f.write(f"{email}  ||  {password}  ||  INVALID  ||  Nguoi dung dung chuong trinh\n")
+                            f.write(f"{email}  ||  {password}  ||  INVALID  ||  Người dùng dừng chương trình\n")
 
                         stop_processing = True
 
@@ -1682,13 +1736,13 @@ class GarenaAccountChecker:
 
                 pass_counter += 1
 
-                self.log_progress("Da hoan thanh mot luot kiem tra. Dang nap lai accounts.txt...", Fore.CYAN)
+                self.log_progress("Đã hoàn thành lượt kiểm tra, đang nạp lại accounts.txt...", Fore.CYAN)
 
 
 
         except Exception as e:
 
-            error_msg = f"Loi tong: {str(e)}"
+            error_msg = f"Lỗi tổng: {str(e)}"
 
             self.log_progress(error_msg, Fore.RED)
 
