@@ -35,6 +35,17 @@ class GarenaAccountChecker:
         self.clonelive_total_current = 0
         self.change_results_file = "changepass.txt"
         self.new_password = new_password
+        self.proxies = self.load_proxies()
+        self.proxy_index = -1
+        self.current_proxy = None
+        if self.proxies:
+            self.log_progress(
+                f"Phat hien {len(self.proxies)} proxy. Se luan chuyen neu gap 3 INVALID lien tiep.",
+                Fore.CYAN
+            )
+
+        self._chromedriver_binary_path = None
+        self._chromedriver_reuse_logged = False
 
     def ensure_output_file(self, output_file):
         directory = os.path.dirname(output_file)
@@ -113,6 +124,170 @@ class GarenaAccountChecker:
                     )
             time.sleep(check_interval)
 
+
+    def load_proxies(self, file_name="proxies.txt"):
+        """Load proxy definitions from a local file or environment variable."""
+        proxies = []
+        entries = []
+
+        env_value = os.environ.get("GARENA_PROXIES") or os.environ.get("PROXY_LIST")
+        if env_value:
+            entries.extend([item.strip() for item in env_value.split(',') if item.strip()])
+
+        file_path = os.path.abspath(file_name)
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as proxy_file:
+                    for raw_line in proxy_file:
+                        line = raw_line.strip()
+                        if not line or line.startswith('#'):
+                            continue
+                        entries.append(line)
+            except Exception as proxy_error:
+                self.log_progress(
+                    f"Khong doc duoc danh sach proxy ({proxy_error}).",
+                    Fore.YELLOW
+                )
+
+        for entry in entries:
+            parsed = self.parse_proxy_entry(entry)
+            if parsed:
+                proxies.append(parsed)
+            else:
+                self.log_progress(f"Bo qua proxy khong hop le: {entry}", Fore.YELLOW)
+
+        return proxies
+
+    def parse_proxy_entry(self, raw_value):
+        """Return a structured proxy configuration dict or None."""
+        if not raw_value:
+            return None
+
+        cleaned = raw_value.strip()
+        if not cleaned:
+            return None
+
+        if '://' in cleaned:
+            scheme, remainder = cleaned.split('://', 1)
+        else:
+            scheme, remainder = 'http', cleaned
+
+        parts = remainder.split(':')
+        if len(parts) == 2:
+            host, port = parts
+            username = password = None
+        elif len(parts) == 4:
+            host, port, username, password = parts
+        else:
+            return None
+
+        host = host.strip()
+        port = port.strip()
+        if not host or not port.isdigit():
+            return None
+
+        parsed = {
+            'scheme': (scheme.strip() or 'http').lower(),
+            'host': host,
+            'port': port,
+            'username': username.strip() if username else None,
+            'password': password.strip() if password else None
+        }
+
+        parsed['label'] = f"{parsed['host']}:{parsed['port']}"
+        parsed['argument'] = self.build_proxy_argument(parsed)
+        parsed['requires_auth'] = bool(parsed['username'] and parsed['password'])
+        return parsed
+
+    def build_proxy_argument(self, proxy_entry):
+        """Build the chrome proxy argument for the given proxy entry."""
+        if not proxy_entry:
+            return None
+
+        scheme = proxy_entry.get('scheme') or 'http'
+        host = proxy_entry.get('host')
+        port = proxy_entry.get('port')
+        username = proxy_entry.get('username')
+        password = proxy_entry.get('password')
+
+        if not host or not port:
+            return None
+
+        if username and password:
+            return f"{scheme}://{username}:{password}@{host}:{port}"
+        return f"{scheme}://{host}:{port}"
+
+    def rotate_proxy(self):
+        """Advance to the next proxy entry and return it."""
+        if not self.proxies:
+            return None
+
+        self.proxy_index = (self.proxy_index + 1) % len(self.proxies)
+        self.current_proxy = self.proxies[self.proxy_index]
+        label = self.current_proxy.get('label', 'proxy')
+        total = len(self.proxies)
+        self.log_progress(
+            f"Chuyen sang proxy moi ({self.proxy_index + 1}/{total}): {label}",
+            Fore.CYAN
+        )
+        return self.current_proxy
+
+    def _resolve_chrome_binary(self):
+        """Tra ve duong dan Chrome neu tim duoc, nguoc lai tra None de dung mac dinh."""
+        env_candidates = [
+            os.environ.get("CHROME_BINARY"),
+            os.environ.get("GOOGLE_CHROME_BIN"),
+        ]
+        for candidate in env_candidates:
+            if candidate and os.path.isfile(candidate):
+                return os.path.abspath(candidate)
+
+        candidate_paths = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ]
+        derived_candidates = [
+            os.path.join(os.environ.get("PROGRAMFILES", ""), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("PROGRAMFILES(X86)", ""), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
+        ]
+        for candidate in derived_candidates:
+            if candidate and candidate not in candidate_paths:
+                candidate_paths.append(candidate)
+
+        for candidate in candidate_paths:
+            if candidate and os.path.isfile(candidate):
+                return os.path.abspath(candidate)
+        return None
+
+    def _resolve_chromedriver_binary(self):
+        """Tra ve duong dan ChromeDriver va cache ket qua cho lan sau."""
+        cached_path = self._chromedriver_binary_path
+        if cached_path and os.path.exists(cached_path):
+            if not self._chromedriver_reuse_logged:
+                self.log_progress(
+                    f"Su dung lai ChromeDriver tai: {cached_path}",
+                    Fore.CYAN
+                )
+                self._chromedriver_reuse_logged = True
+            return cached_path
+
+        try:
+            path_str = ChromeDriverManager().install()
+            self._chromedriver_binary_path = path_str
+            self._chromedriver_reuse_logged = False
+            self.log_progress(
+                f"Da cai ChromeDriver tai: {path_str}",
+                Fore.CYAN
+            )
+            return path_str
+        except Exception as error:
+            self.log_progress(
+                f"Khong the cai ChromeDriver tu dong: {error}",
+                Fore.RED
+            )
+            raise
+
     def normalize_text(self, text):
         """Return lowercase text with diacritics removed for keyword matching."""
         if not text:
@@ -134,12 +309,35 @@ class GarenaAccountChecker:
         options.add_experimental_option('useAutomationExtension', False)
         options.add_experimental_option("detach", True)
 
-        # 👉 chỉ định đường dẫn chrome.exe trên máy bạn
-        options.binary_location = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        chrome_binary = self._resolve_chrome_binary()
+        if chrome_binary:
+            options.binary_location = chrome_binary
+            self.log_progress(
+                f"Su dung Chrome tai: {chrome_binary}",
+                Fore.CYAN
+            )
+        else:
+            self.log_progress(
+                "Su dung Chrome mac dinh da cai tren may.",
+                Fore.CYAN
+            )
+
+        proxy_argument = self.build_proxy_argument(self.current_proxy)
+        if proxy_argument:
+            options.add_argument(f"--proxy-server={proxy_argument}")
+            options.add_argument("--ignore-certificate-errors")
+            options.add_argument("--proxy-bypass-list=<-loopback>")
+            label = self.current_proxy.get('label', proxy_argument)
+            scheme = self.current_proxy.get('scheme', 'http')
+            auth_note = ' co xac thuc' if self.current_proxy.get('requires_auth') else ''
+            self.log_progress(
+                f"Su dung proxy {label} ({scheme}{auth_note}).",
+                Fore.CYAN
+            )
 
         try:
             driver = webdriver.Chrome(
-                service=Service(ChromeDriverManager().install()),
+                service=Service(self._resolve_chromedriver_binary()),
                 options=options
             )
             driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -238,10 +436,11 @@ class GarenaAccountChecker:
             return False, "Không thể khởi tạo trình duyệt"
 
         try:
-            login_url = "https://account.garena.com"
+            login_url = "https://account.garena.com/"
             self.log_progress("Đang mở trang đăng nhập...", Fore.CYAN)
             start_time = time.time()
             driver.get(login_url)
+            time.sleep(1.5)
             load_time = time.time() - start_time
             self.log_progress(f"Đã mở trang đăng nhập trong {load_time:.2f} giây.", Fore.CYAN)
 
@@ -355,17 +554,17 @@ class GarenaAccountChecker:
                     )
                     current_password_field.click()
                     current_password_field.clear()
-                    self.type_like_human(current_password_field, password)
+                    pyperclip.copy(password)
+                    element.send_keys(Keys.CONTROL, 'v')
                     current_password_field.send_keys(Keys.TAB)
-                    time.sleep(0.5)
+                    time.sleep(random.uniform(0.5, 1))
 
-                    new_password_field = driver.switch_to.active_element
-                    self.type_like_human(new_password_field, self.new_password)
-                    new_password_field.send_keys(Keys.TAB)
-                    time.sleep(0.4)
+                    pyperclip.copy(new_password)
+                    element.send_keys(Keys.CONTROL, 'v')
+                    current_password_field.send_keys(Keys.TAB)
+                    time.sleep(random.uniform(0.5, 1))
 
-                    confirm_password_field = driver.switch_to.active_element
-                    self.type_like_human(confirm_password_field, self.new_password)
+                    element.send_keys(Keys.CONTROL, 'v')
                     confirm_password_field.send_keys(Keys.ENTER)
                     self.log_progress("Đã gửi yêu cầu đổi mật khẩu, chờ phản hồi...", Fore.CYAN)
                     time.sleep(4)
@@ -613,35 +812,51 @@ class GarenaAccountChecker:
                                 third = invalid_streak[2]["index"]
                                 if third == i and second == i - 1 and first == i - 2:
                                     self.log_progress(
-                                        "Phát hiện 3 tài khoản INVALID liên tiếp. Tạm dừng để kiểm tra lại.",
+                                        "Phat hien 3 tai khoan INVALID lien tiep. Dang khoi phuc ket noi.",
                                         Fore.RED
                                     )
-                                    stop_event = threading.Event()
-                                    alert_thread = threading.Thread(
-                                        target=self.alert_user,
-                                        args=(stop_event,),
-                                        daemon=True
-                                    )
-                                    alert_thread.start()
-                                    original_ip = self.get_current_ip()
-                                    new_ip = self.wait_for_ip_change(original_ip, check_interval=0.5)
-                                    stop_event.set()
-                                    alert_thread.join()
-                                    if new_ip:
+                                    restarted_via_proxy = False
+                                    proxy_entry = None
+                                    if self.proxies:
+                                        proxy_entry = self.rotate_proxy()
+                                        if proxy_entry:
+                                            restarted_via_proxy = True
+                                            time.sleep(2)
+
+                                    if not restarted_via_proxy:
+                                        stop_event = threading.Event()
+                                        alert_thread = threading.Thread(
+                                            target=self.alert_user,
+                                            args=(stop_event,),
+                                            daemon=True
+                                        )
+                                        alert_thread.start()
+                                        original_ip = self.get_current_ip()
+                                        new_ip = self.wait_for_ip_change(original_ip, check_interval=0.5)
+                                        stop_event.set()
+                                        alert_thread.join()
+                                        if new_ip:
+                                            self.log_progress(
+                                                f"Tiep tuc kiem tra sau khi IP thay doi thanh {new_ip}.",
+                                                Fore.GREEN
+                                            )
+                                        else:
+                                            self.log_progress(
+                                                "Tiep tuc kiem tra du khong xac dinh duoc IP moi.",
+                                                Fore.YELLOW
+                                            )
+                                    else:
+                                        label = proxy_entry.get('label', 'proxy') if proxy_entry else 'proxy'
                                         self.log_progress(
-                                            f"Tiep tuc kiem tra sau khi IP thay doi thanh {new_ip}.",
+                                            f"Tiep tuc kiem tra voi proxy moi: {label}.",
                                             Fore.GREEN
                                         )
-                                    else:
-                                        self.log_progress(
-                                            "Tiep tuc kiem tra du khong xac dinh duoc IP moi.",
-                                            Fore.YELLOW
-                                        )
+
                                     restart_index = first
                                     pending_invalid_records = []
                                     invalid_streak = []
                                     self.log_progress(
-                                        f"Quay lại kiểm tra từ tài khoản thứ {restart_index + 1}.",
+                                        f"Quay lai kiem tra tu tai khoan thu {restart_index + 1}.",
                                         Fore.YELLOW
                                     )
                                     i = restart_index
