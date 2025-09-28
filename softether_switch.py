@@ -6,6 +6,7 @@ import csv
 import json
 import os
 import random
+import socket
 import subprocess
 import time
 import urllib.request
@@ -72,6 +73,7 @@ class SoftEtherVpnSwitcher:
 
         self.vpncmd_path = self._resolve_vpncmd_path(vpncmd_path)
         self.last_state = self._load_state()
+        self.last_forced_disconnect = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -84,8 +86,16 @@ class SoftEtherVpnSwitcher:
             )
             return False
 
+        self.last_forced_disconnect = False
+
         candidates = self._collect_candidate_servers()
         if not candidates:
+            if self.last_forced_disconnect:
+                self._log(
+                    "Da tat VPN hien tai do khong tai duoc danh sach may chu. Tiep tuc voi ket noi hien tai.",
+                    None,
+                )
+                return True
             self._log("Khong tim thay may chu VPN Gate phu hop de ket noi.", None)
             return False
 
@@ -240,6 +250,7 @@ class SoftEtherVpnSwitcher:
                 content = response.read().decode("utf-8", errors="ignore")
         except Exception as exc:  # pylint: disable=broad-except
             self._log(f"Khong the tai danh sach VPN Gate: {exc}", None)
+            self._handle_server_fetch_failure(exc)
             return []
 
         lines: List[str] = []
@@ -264,6 +275,47 @@ class SoftEtherVpnSwitcher:
 
         servers.sort(key=lambda item: item.score, reverse=True)
         return servers
+
+    def _handle_server_fetch_failure(self, exc: Exception) -> None:
+        if not self._is_timeout_error(exc):
+            return
+        self._log(
+            "Loi timeout khi tai danh sach may chu VPN Gate. Dang tat VPN hien tai de tiep tuc voi IP moi...",
+            None,
+        )
+        disconnected = self._force_disconnect_current_vpn()
+        if disconnected:
+            self.last_forced_disconnect = True
+            self._log("Da tat VPN hien tai sau loi timeout danh sach may chu.", None)
+        else:
+            self._log("Khong the tat VPN hien tai sau loi timeout danh sach may chu.", None)
+
+    def _force_disconnect_current_vpn(self) -> bool:
+        if not self.vpncmd_path:
+            return False
+
+        try:
+            self._run_vpncmd("AccountDisconnect", self.account_name, check=False, timeout=30)
+        except Exception:  # pylint: disable=broad-except
+            pass
+        try:
+            self._run_vpncmd("AccountDelete", self.account_name, check=False, timeout=30)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        try:
+            return not self._is_account_connected()
+        except Exception:  # pylint: disable=broad-except
+            return False
+
+    @staticmethod
+    def _is_timeout_error(exc: Exception) -> bool:
+        if isinstance(exc, (socket.timeout, TimeoutError)):
+            return True
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, (socket.timeout, TimeoutError)):
+            return True
+        return False
 
     def _row_to_server(self, row: List[str]) -> VpnGateServer:
         hostname = row[0].strip()
