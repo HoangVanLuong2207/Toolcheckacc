@@ -1,4 +1,4 @@
-﻿"""Helpers to control SoftEther VPN Client via vpncmd for automatic VPN Gate switching."""
+"""Helpers to control SoftEther VPN Client via vpncmd for automatic VPN Gate switching."""
 from __future__ import annotations
 
 import base64
@@ -110,6 +110,18 @@ class SoftEtherVpnSwitcher:
                 return True
         self._log("Khong the ket noi may chu VPN Gate nao sau khi thu chuyen.", None)
         return False
+
+    def force_disconnect(self) -> bool:
+        """Force the SoftEther client to disconnect and revert to the base network."""
+        if not self.vpncmd_path:
+            return False
+
+        disconnected = self._force_disconnect_current_vpn()
+        if disconnected:
+            self._log("Da tat ket noi VPN hien tai, su dung IP goc.", None)
+        else:
+            self._log("Khong the xac nhan tat VPN hien tai.", None)
+        return disconnected
 
     # ------------------------------------------------------------------
     # SoftEther operations
@@ -280,15 +292,15 @@ class SoftEtherVpnSwitcher:
         if not self._is_timeout_error(exc):
             return
         self._log(
-            "Loi timeout khi tai danh sach may chu VPN Gate. Dang tat VPN hien tai de tiep tuc voi IP moi...",
+            "Loi timeout khi tai danh sach may chu VPN Gate. Dang tat VPN hien tai va tiep tuc su dung IP goc...",
             None,
         )
         disconnected = self._force_disconnect_current_vpn()
         if disconnected:
-            self.last_forced_disconnect = True
             self._log("Da tat VPN hien tai sau loi timeout danh sach may chu.", None)
         else:
-            self._log("Khong the tat VPN hien tai sau loi timeout danh sach may chu.", None)
+            self._log("Khong the xac nhan tat VPN hien tai, tiep tuc su dung IP hien tai.", None)
+        self.last_forced_disconnect = True
 
     def _force_disconnect_current_vpn(self) -> bool:
         if not self.vpncmd_path:
@@ -438,4 +450,5 @@ class SoftEtherVpnSwitcher:
 
 
 __all__ = ["SoftEtherVpnSwitcher", "SoftEtherCommandError", "VpnGateServer"]
+
 
