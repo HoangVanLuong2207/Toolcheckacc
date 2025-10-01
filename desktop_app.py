@@ -1,4 +1,4 @@
-﻿"""Desktop GUI application for managing Garena accounts and output files."""
+"""Desktop GUI application for managing Garena accounts and output files."""
 
 import os
 import queue
@@ -13,19 +13,8 @@ from tkinter import messagebox, simpledialog
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
 
-from check_garena import GarenaAccountChecker
 
-
-class GuiGarenaAccountChecker(GarenaAccountChecker):
-    """GarenaAccountChecker subclass that streams progress logs to a queue."""
-
-    def __init__(self, log_queue: "queue.Queue[tuple[str, object]]") -> None:
-        super().__init__()
-        self._log_queue = log_queue
-
-    def log_progress(self, message, color=None):  # type: ignore[override]
-        timestamp = time.strftime("%H:%M:%S")
-        self._log_queue.put(("log", f"[{timestamp}] {message}"))
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 class AccountsInputDialog(simpledialog.Dialog):
@@ -36,10 +25,10 @@ class AccountsInputDialog(simpledialog.Dialog):
         super().__init__(parent, title=title)
 
     def body(self, master):  # type: ignore[override]
-        self.title("Them tai khoan")
+        self.title("Thêm tài khoản")  # Chỉnh sửa
         ttk.Label(
             master,
-            text="Nhap danh sach tai khoan (email:matkhau moi dong)",
+            text="Nhập danh sách tài khoản (email:mật khẩu mỗi dòng)",  # Chỉnh sửa
         ).grid(row=0, column=0, padx=5, pady=(5, 0), sticky="w")
         self.text_widget = ScrolledText(master, width=60, height=12, wrap="none")
         self.text_widget.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
@@ -68,8 +57,8 @@ class AccountsInputDialog(simpledialog.Dialog):
             if len(invalid) > 10:
                 message += "\n..."
             messagebox.showwarning(
-                "Dinh dang khong hop le",
-                "Nhung dong sau thieu dau ':' hoac '|':\n" + message,
+                "Định dạng không hợp lệ",  # Chỉnh sửa
+                "Những dòng sau thiếu dấu ':' hoặc '|':\n" + message,  # Chỉnh sửa
             )
             return False
         self._parsed_lines = parsed
@@ -101,7 +90,9 @@ class Application(tk.Tk):
         self.accounts_file = self.base_dir / "accounts.txt"
         self.log_queue: "queue.Queue[tuple[str, object]]" = queue.Queue()
         self._run_thread: threading.Thread | None = None
+        self._current_process: subprocess.Popen | None = None
         self._running = False
+        self._stop_requested = False
 
         self.account_lines: list[str] = []
         self.account_count: int = 0
@@ -109,7 +100,7 @@ class Application(tk.Tk):
         self._seen_output_names: list[str] = []
         self.last_run_time: str | None = None
         self.current_progress: str | None = None
-        self._status_base = "San sang"
+        self._status_base = "Sẵn sàng"  # Chỉnh sửa
 
         self._build_ui()
         self._load_accounts(force_update=True)
@@ -127,7 +118,7 @@ class Application(tk.Tk):
         accounts_frame.rowconfigure(1, weight=1)
         accounts_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(accounts_frame, text="Danh sach tai khoan").grid(row=0, column=0, sticky="w")
+        ttk.Label(accounts_frame, text="Danh sách tài khoản").grid(row=0, column=0, sticky="w")  # Chỉnh sửa
 
         accounts_list_frame = ttk.Frame(accounts_frame)
         accounts_list_frame.grid(row=1, column=0, sticky="nsew", pady=(5, 10))
@@ -153,11 +144,11 @@ class Application(tk.Tk):
         buttons_frame.grid(row=2, column=0, sticky="ew")
         buttons_frame.columnconfigure((0, 1, 2, 3, 4), weight=1)
 
-        self.add_button = ttk.Button(buttons_frame, text="Them", command=self._add_account)
-        self.remove_button = ttk.Button(buttons_frame, text="Xoa", command=self._remove_selected_account)
-        self.refresh_accounts_button = ttk.Button(buttons_frame, text="Tai lai", command=lambda: self._load_accounts(True))
-        self.run_button = ttk.Button(buttons_frame, text="Chay kiem tra", command=self._start_check)
-        self.stop_button = ttk.Button(buttons_frame, text="Dung chuong trinh", command=self._stop_application)
+        self.add_button = ttk.Button(buttons_frame, text="Thêm", command=self._add_account)  # Chỉnh sửa
+        self.remove_button = ttk.Button(buttons_frame, text="Xóa", command=self._remove_selected_account)  # Chỉnh sửa
+        self.refresh_accounts_button = ttk.Button(buttons_frame, text="Tải lại", command=lambda: self._load_accounts(True))  # Chỉnh sửa
+        self.run_button = ttk.Button(buttons_frame, text="Chạy kiểm tra", command=self._start_check)  # Chỉnh sửa
+        self.stop_button = ttk.Button(buttons_frame, text="Dừng kiểm tra", command=self._stop_current_run)  # Chỉnh sửa
 
         self.add_button.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
         self.remove_button.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
@@ -174,8 +165,8 @@ class Application(tk.Tk):
         files_label_frame.grid(row=0, column=0, sticky="ew")
         files_label_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(files_label_frame, text="File ket qua").grid(row=0, column=0, sticky="w")
-        self.open_dir_button = ttk.Button(files_label_frame, text="Mo thu muc", command=self._open_output_dir)
+        ttk.Label(files_label_frame, text="File kết quả").grid(row=0, column=0, sticky="w")  # Chỉnh sửa
+        self.open_dir_button = ttk.Button(files_label_frame, text="Mở thư mục", command=self._open_output_dir)  # Chỉnh sửa
         self.open_dir_button.grid(row=0, column=1, padx=5)
 
         files_frame = ttk.Frame(main_frame)
@@ -197,7 +188,7 @@ class Application(tk.Tk):
         preview_frame.columnconfigure(0, weight=1)
         preview_frame.rowconfigure(0, weight=1)
 
-        ttk.Label(preview_frame, text="Noi dung file").grid(row=0, column=0, sticky="w")
+        ttk.Label(preview_frame, text="Nội dung file").grid(row=0, column=0, sticky="w")  # Chỉnh sửa
         self.file_content = ScrolledText(preview_frame, height=15, wrap="none", state="disabled")
         self.file_content.grid(row=1, column=0, sticky="nsew")
 
@@ -206,7 +197,7 @@ class Application(tk.Tk):
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(1, weight=1)
 
-        ttk.Label(log_frame, text="Nhat ky").grid(row=0, column=0, sticky="w")
+        ttk.Label(log_frame, text="Nhật ký").grid(row=0, column=0, sticky="w")  # Chỉnh sửa
         self.log_text = ScrolledText(log_frame, height=10, state="disabled", wrap="word")
         self.log_text.grid(row=1, column=0, sticky="nsew")
 
@@ -220,7 +211,7 @@ class Application(tk.Tk):
         except FileNotFoundError:
             lines = []
         except Exception as exc:
-            self._append_log(f"[Loi] Khong doc duoc accounts.txt: {exc}")
+            self._append_log(f"[Lỗi] Không đọc được accounts.txt: {exc}")  # Chỉnh sửa
             lines = self.account_lines[:]
         if force_update or lines != self.account_lines:
             self.account_lines = lines
@@ -239,7 +230,7 @@ class Application(tk.Tk):
         self._load_accounts(force_update=True)
 
     def _add_account(self) -> None:
-        dialog = AccountsInputDialog(self, title="Them tai khoan")
+        dialog = AccountsInputDialog(self, title="Thêm tài khoản")  # Chỉnh sửa
         if dialog.result:
             self.account_lines.extend(dialog.result)
             self._save_accounts()
@@ -247,14 +238,14 @@ class Application(tk.Tk):
     def _remove_selected_account(self) -> None:
         selection = self.accounts_listbox.curselection()
         if not selection:
-            messagebox.showinfo("Chon tai khoan", "Vui long chon tai khoan.")
+            messagebox.showinfo("Chọn tài khoản", "Vui lòng chọn tài khoản.")  # Chỉnh sửa
             return
         index = selection[0]
         if index >= len(self.account_lines):
             return
         entry = self.account_lines[index]
-        display_name = entry.split(":", 1)[0] if entry else "(dong trong)"
-        if messagebox.askyesno("Xoa tai khoan", f"Chan chan xoa {display_name}?"):
+        display_name = entry.split(":", 1)[0] if entry else "(dòng trống)"  # Chỉnh sửa
+        if messagebox.askyesno("Xóa tài khoản", f"Chắc chắn xóa {display_name}?"):  # Chỉnh sửa
             self.account_lines.pop(index)
             self._save_accounts()
 
@@ -294,7 +285,7 @@ class Application(tk.Tk):
         except UnicodeDecodeError:
             content = path.read_text(encoding="latin-1")
         except Exception as exc:
-            content = f"Khong doc duoc noi dung: {exc}"
+            content = f"Không đọc được nội dung: {exc}"  # Chỉnh sửa
         self.file_content.configure(state="normal")
         self.file_content.delete("1.0", tk.END)
         self.file_content.insert(tk.END, content)
@@ -310,27 +301,29 @@ class Application(tk.Tk):
             else:
                 subprocess.run(["xdg-open", str(path)], check=False)
         except Exception as exc:
-            messagebox.showerror("Khong mo duoc", f"Khong the mo thu muc: {exc}")
+            messagebox.showerror("Không mở được", f"Không thể mở thư mục: {exc}")  # Chỉnh sửa
 
     def _start_check(self) -> None:
         if self._running:
-            messagebox.showinfo("Dang xu ly", "Qua trinh kiem tra dang chay.")
+            messagebox.showinfo("Đang xử lý", "Quá trình kiểm tra đang chạy.")  # Chỉnh sửa
             return
         if not messagebox.askyesno(
-            "Xac nhan",
-            "Ban da luu lai du lieu va san sang chay kiem tra?",
+            "Xác nhận",  # Chỉnh sửa
+            "Bạn đã lưu lại dữ liệu và sẵn sàng chạy kiểm tra?",  # Chỉnh sửa
         ):
             return
         if not self.account_lines:
             if not messagebox.askyesno(
-                "Khong co tai khoan",
-                "Danh sach tai khoan dang trong, ban co chac chan muon chay kiem tra?",
+                "Không có tài khoản",  # Chỉnh sửa
+                "Danh sách tài khoản đang trống, bạn có chắc chắn muốn chạy kiểm tra?",  # Chỉnh sửa
             ):
                 return
         self.last_run_time = time.strftime("%H:%M:%S")
-        self.current_progress = "Chuan bi"
+        self.current_progress = "Chuẩn bị"  # Chỉnh sửa
         self._set_running(True)
-        self._append_log("=== Bat dau kiem tra tai khoan ===")
+        self._append_log("=== Bắt đầu kiểm tra tài khoản ===")  # Chỉnh sửa
+        self._stop_requested = False
+        self._current_process = None
         self.file_content.configure(state="normal")
         self.file_content.delete("1.0", tk.END)
         self.file_content.configure(state="disabled")
@@ -342,13 +335,58 @@ class Application(tk.Tk):
         self._run_thread.start()
 
     def _run_checker(self) -> None:
+        process: subprocess.Popen | None = None
         try:
-            checker = GuiGarenaAccountChecker(self.log_queue)
-            output_file = checker._output_path("results.csv")
-            checker.process_accounts(str(self.accounts_file), output_file)
-            self.log_queue.put(("status", {"state": "completed", "checker": checker}))
+            python_exec = Path(sys.executable)
+            if python_exec.name.lower() == "pythonw.exe":
+                candidate = python_exec.with_name("python.exe")
+                if candidate.exists():
+                    python_exec = candidate
+            env = os.environ.copy()
+            env.setdefault("PYTHONIOENCODING", "utf-8")
+            env.setdefault("PYTHONUTF8", "1")
+            env.setdefault("TERM", "xterm")
+            creationflags = 0
+            if os.name == "nt":
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            process = subprocess.Popen(
+                [str(python_exec), "-X", "utf8", "check_garena.py"],
+                cwd=str(self.base_dir),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=env,
+                creationflags=creationflags
+            )
+            self._current_process = process
+            assert process.stdout is not None
+            for raw_line in iter(process.stdout.readline, b""):
+                decoded = raw_line.decode("utf-8", errors="replace")
+                clean = ANSI_ESCAPE_RE.sub("", decoded).rstrip()
+                if clean:
+                    self.log_queue.put(("log", clean))
+            process.stdout.close()
+            return_code = process.wait()
+            if return_code == 0:
+                self.log_queue.put(("status", {"state": "completed"}))
+            elif self._stop_requested:
+                self.log_queue.put(("status", {"state": "cancelled"}))
+            else:
+                self.log_queue.put((
+                    "status",
+                    {
+                        "state": "error",
+                        "message": f"Tiến trình trả về mã lỗi {return_code}",  # Chỉnh sửa
+                    },
+                ))
         except Exception as exc:
-            self.log_queue.put(("status", {"state": "error", "message": str(exc)}))
+            if self._stop_requested:
+                self.log_queue.put(("status", {"state": "cancelled"}))
+            else:
+                self.log_queue.put(("status", {"state": "error", "message": str(exc)}))
+        finally:
+            if self._current_process is process:
+                self._current_process = None
+            process = None
 
     def _append_log(self, message: str) -> None:
         self.log_text.configure(state="normal")
@@ -362,11 +400,11 @@ class Application(tk.Tk):
 
     def _update_status_label(self) -> None:
         parts = [self._status_base]
-        parts.append(f"Tai khoan: {self.account_count}")
+        parts.append(f"Tài khoản: {self.account_count}")  # Chỉnh sửa
         if self.last_run_time:
-            parts.append(f"Bat dau: {self.last_run_time}")
+            parts.append(f"Bắt đầu: {self.last_run_time}")  # Chỉnh sửa
         if self.current_progress:
-            parts.append(f"Tien do: {self.current_progress}")
+            parts.append(f"Tiến độ: {self.current_progress}")  # Chỉnh sửa
         self.status_var.set(" | ".join(parts))
 
     def _set_running(self, running: bool) -> None:
@@ -384,9 +422,9 @@ class Application(tk.Tk):
             else:
                 button.state(["!disabled"])
         if running:
-            self._set_status("Dang kiem tra tai khoan...")
+            self._set_status("Đang kiểm tra tài khoản...")  # Chỉnh sửa
         else:
-            self._set_status("San sang")
+            self._set_status("Sẵn sàng")  # Chỉnh sửa
 
     def _poll_log_queue(self) -> None:
         try:
@@ -401,36 +439,48 @@ class Application(tk.Tk):
                 elif kind == "status" and isinstance(payload, dict):
                     state = payload.get("state")
                     if state == "completed":
-                        checker = payload.get("checker")
-                        self._append_log("=== Hoan tat kiem tra ===")
-                        self.current_progress = "Hoan tat"
+                        self.current_progress = "Hoàn tất"  # Chỉnh sửa
                         self._set_running(False)
+                        self._stop_requested = False
                         self._load_accounts(force_update=True)
                         self._refresh_output_files(force_update=True)
-                        if checker is not None:
-                            summary = (
-                                f"Tong: {checker.checked} | Hop le: {checker.valid} | "
-                                f"Khong hop le: {checker.invalid}"
-                            )
-                            self._append_log(summary)
+                    elif state == "cancelled":
+                        self._append_log("=== Đã dừng kiểm tra theo yêu cầu ===")  # Chỉnh sửa
+                        self.current_progress = "Đã dừng"  # Chỉnh sửa
+                        self._set_running(False)
+                        self._stop_requested = False
+                        self._load_accounts(force_update=True)
+                        self._refresh_output_files(force_update=True)
                     elif state == "error":
-                        message = payload.get("message", "Co loi xay ra")
-                        self._append_log(f"[Loi] {message}")
+                        message = payload.get("message", "Có lỗi xảy ra")  # Chỉnh sửa
+                        self._append_log(f"[Lỗi] {message}")  # Chỉnh sửa
                         self.current_progress = None
                         self._set_running(False)
-                        messagebox.showerror("Loi", message)
+                        self._stop_requested = False
+                        messagebox.showerror("Lỗi", message)  # Chỉnh sửa
         except queue.Empty:
             pass
         finally:
             self.after(200, self._poll_log_queue)
 
-    def _stop_application(self) -> None:
-        if not messagebox.askyesno("Dung chuong trinh", "Chac chan dong ung dung?" ):
+    def _stop_current_run(self) -> None:
+        if not self._running:
+            messagebox.showinfo("Không có tiến trình", "Không có kiểm tra nào đang chạy.")  # Chỉnh sửa
             return
-        try:
-            self.destroy()
-        finally:
-            os._exit(0)
+        self._stop_requested = True
+        process = self._current_process
+        if process and process.poll() is None:
+            self._append_log("=== Đang dừng kiểm tra theo yêu cầu ===")  # Chỉnh sửa
+            try:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            except Exception as exc:
+                self._append_log(f"[Lỗi] Không dừng được tiến trình: {exc}")  # Chỉnh sửa
+        else:
+            self._append_log("Không tìm thấy tiến trình đang chạy.")  # Chỉnh sửa
 
 
 def main() -> None:

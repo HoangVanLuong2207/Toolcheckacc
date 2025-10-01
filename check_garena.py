@@ -228,6 +228,13 @@ class GarenaAccountChecker:
         self._chromedriver_binary_path = None
         self._chromedriver_reuse_logged = False
 
+        headless_env = os.environ.get("CHROME_HEADLESS")
+        if headless_env is None:
+            self.chrome_headless = True
+        else:
+            self.chrome_headless = headless_env.strip().lower() not in {"0", "false", "no"}
+
+
     def _output_path(self, *parts):
         return os.path.join(self.output_dir, *parts)
 
@@ -1817,7 +1824,7 @@ def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     input_file = os.path.join(script_dir, "accounts.txt")
 
-    print(f"{Fore.YELLOW}Đang khởi tạo công cụ kiểm tra tài khoản Garena...{Style.RESET_ALL}")
+    print("Dang khoi tao cong cu kiem tra tai khoan Garena...")
     checker = GarenaAccountChecker()
     output_file = checker._output_path("results.csv")
     checker.log_progress("Bắt đầu quy trình kiểm tra tài khoản.", Fore.YELLOW)
@@ -1838,9 +1845,9 @@ def main():
         else:
             checker.clonelive_total_current = 0
     except Exception as summary_error:
-        checker.log_progress(f"Không đọc được clonelive.js để tổng kết: {summary_error}", Fore.YELLOW)
+        checker.log_progress(f"Khong doc duoc clonelive.js de tong ket: {summary_error}")
         checker.clonelive_total_current = 0
-    checker.log_progress(f"Tổng kết clonelive.js: {checker.clonelive_added}/{checker.total_accounts} tài khoản mới ghi (tổng hiện có: {checker.clonelive_total_current}).", Fore.CYAN)
+    checker.log_progress(f"Tong ket clonelive.js: {checker.clonelive_added}/{checker.total_accounts} tai khoan moi ghi (tong hien co: {checker.clonelive_total_current}).")
 
     return checker
 
