@@ -51,6 +51,13 @@ class GarenaAccountChecker:
         self._output_files_initialized = False
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.base_dir = base_dir
+        self.output_dir = os.environ.get(
+            "OUTPUT_DIR",
+            os.path.join(self.base_dir, "output")
+        )
+        self.output_dir = os.path.abspath(os.path.expanduser(self.output_dir))
+        os.makedirs(self.output_dir, exist_ok=True)
         self.vpn_state_base = os.environ.get(
             "VPN_STATE_DIR",
             os.path.join(base_dir, "SoftEtherVPN")
@@ -220,6 +227,9 @@ class GarenaAccountChecker:
 
         self._chromedriver_binary_path = None
         self._chromedriver_reuse_logged = False
+
+    def _output_path(self, *parts):
+        return os.path.join(self.output_dir, *parts)
 
     def ensure_output_file(self, output_file):
         directory = os.path.dirname(output_file)
@@ -764,8 +774,10 @@ class GarenaAccountChecker:
             element.send_keys(char)
             time.sleep(random.uniform(0.05, 0.15))
 
-    def remove_account_from_source(self, email, password, file_path="accounts.txt"):
+    def remove_account_from_source(self, email, password, file_path=None):
         """Xoa tai khoan khoi file nguon sau khi da xu ly."""
+        if not file_path:
+            file_path = os.path.join(self.base_dir, 'accounts.txt')
         try:
             if not file_path or not os.path.exists(file_path):
                 return
@@ -811,14 +823,14 @@ class GarenaAccountChecker:
         file_defaults = {
             output_file: "Email  ||  Mật khẩu  ||  Trạng thái    ||  Thông báo\n",
             valid_file: "",
-            "clonepass.txt": "",
+            self._output_path("clonepass.txt"): "",
             invalid_file: "",
             notcheck_file: "",
-            "liveordie.txt": "",
-            "clonelive.js": "[]\n",
-            "clonelive.txt": "",
-            "clonedie.js": "[]\n",
-            "clonedie.txt": ""
+            self._output_path("liveordie.txt"): "",
+            self._output_path("clonelive.js"): "[]\n",
+            self._output_path("clonelive.txt"): "",
+            self._output_path("clonedie.js"): "[]\n",
+            self._output_path("clonedie.txt"): ""
         }
         processed = set()
         for path_value, content in file_defaults.items():
@@ -826,6 +838,9 @@ class GarenaAccountChecker:
                 continue
             processed.add(path_value)
             try:
+                directory = os.path.dirname(path_value)
+                if directory and not os.path.exists(directory):
+                    os.makedirs(directory, exist_ok=True)
                 with open(path_value, "w", encoding="utf-8") as f:
                     f.write(content)
             except Exception as reset_error:
@@ -1005,7 +1020,7 @@ class GarenaAccountChecker:
                 liveordie_written = False
                 try:
                     line = f"{email}  ||  {password}  ||  {results[0]}  ||  {results[1]}  ||  {results[2]}\n"
-                    with open("liveordie.txt", "a", encoding="utf-8") as f:
+                    with open(self._output_path("liveordie.txt"), "a", encoding="utf-8") as f:
                         f.write(line)
                     liveordie_written = True
                 except Exception as live_error:
@@ -1018,7 +1033,7 @@ class GarenaAccountChecker:
                 locked_keywords = ("bi khoa", "khoa tai khoan", "khoa tam thoi")
 
                 if "binh thuong" in normalized_status:
-                    clonelive_path = "clonelive.js"
+                    clonelive_path = self._output_path("clonelive.js")
                     account_entry = {"username": email, "password": password}
                     try:
                         existing_accounts = []
@@ -1041,7 +1056,7 @@ class GarenaAccountChecker:
                         with open(clonelive_path, "w", encoding="utf-8") as js_file:
                             json.dump(existing_accounts, js_file, ensure_ascii=False, indent=2)
                         try:
-                            with open("clonelive.txt", "w", encoding="utf-8") as txt_file:
+                            with open(self._output_path("clonelive.txt"), "w", encoding="utf-8") as txt_file:
                                 for entry in existing_accounts:
                                     txt_file.write(f"{entry['username']}:{entry['password']}\n")
                         except Exception as txt_error:
@@ -1054,7 +1069,7 @@ class GarenaAccountChecker:
                     except Exception as clone_error:
                         self.log_progress(f"Không thêm tài khoản Bình thuong clonelive.js: {clone_error}", Fore.YELLOW)
                 elif any(keyword in normalized_status for keyword in locked_keywords):
-                    clonedie_path = "clonedie.js"
+                    clonedie_path = self._output_path("clonedie.js")
                     account_entry = {"username": email, "password": password}
                     try:
                         existing_accounts = []
@@ -1075,7 +1090,7 @@ class GarenaAccountChecker:
                         with open(clonedie_path, "w", encoding="utf-8") as js_file:
                             json.dump(existing_accounts, js_file, ensure_ascii=False, indent=2)
                         try:
-                            with open("clonedie.txt", "w", encoding="utf-8") as txt_file:
+                            with open(self._output_path("clonedie.txt"), "w", encoding="utf-8") as txt_file:
                                 for entry in existing_accounts:
                                     txt_file.write(f"{entry['username']}:{entry['password']}\n")
                         except Exception as txt_error:
@@ -1122,11 +1137,11 @@ class GarenaAccountChecker:
 
         self.log_progress("Chuẩn bị các file kết quả để ghi dữ liệu.", Fore.YELLOW)
 
-        valid_file = "clonepass.js"
+        valid_file = self._output_path("clonepass.js")
 
-        invalid_file = "cloneunpass.txt"
+        invalid_file = self._output_path("cloneunpass.txt")
 
-        notcheck_file = "notcheck.txt"
+        notcheck_file = self._output_path("notcheck.txt")
 
         if not self._output_files_initialized:
             self.reset_output_files(output_file, valid_file, invalid_file, notcheck_file)
@@ -1380,7 +1395,7 @@ class GarenaAccountChecker:
 
                             try:
 
-                                with open("clonepass.txt", "a", encoding="utf-8") as txt_file:
+                                with open(self._output_path("clonepass.txt"), "a", encoding="utf-8") as txt_file:
 
                                     txt_file.write(f"{email}:{password}\n")
 
@@ -1780,7 +1795,7 @@ class GarenaAccountChecker:
             print(f"\n{Fore.RED}Lỗi khi lưu kết quả: {str(e)}{Style.RESET_ALL}")
 
 def main():
-   print(f"""{Fore.CYAN}
+    print(f"""{Fore.CYAN}
   _______              _     ____              
  |__   __|            | |   |  _ \             
     | | ___   ___   __| |   | |_) | _   _ 
@@ -1799,32 +1814,36 @@ def main():
     {Style.RESET_ALL}""")
 
 
-input_file = "accounts.txt"
-output_file = "results.csv"
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    input_file = os.path.join(script_dir, "accounts.txt")
 
-print(f"{Fore.YELLOW}Đang khởi tạo công cụ kiểm tra tài khoản Garena...{Style.RESET_ALL}")
-checker = GarenaAccountChecker()
-checker.log_progress("Bắt đầu quy trình kiểm tra tài khoản.", Fore.YELLOW)
-checker.process_accounts(input_file, output_file)
-clonelive_path = "clonelive.js"
-try:
-    if os.path.exists(clonelive_path):
-        with open(clonelive_path, "r", encoding="utf-8") as js_file:
-            raw_data = js_file.read().strip()
-        if raw_data:
-            data = json.loads(raw_data)
-            if isinstance(data, list):
-                checker.clonelive_total_current = len(data)
+    print(f"{Fore.YELLOW}Đang khởi tạo công cụ kiểm tra tài khoản Garena...{Style.RESET_ALL}")
+    checker = GarenaAccountChecker()
+    output_file = checker._output_path("results.csv")
+    checker.log_progress("Bắt đầu quy trình kiểm tra tài khoản.", Fore.YELLOW)
+    checker.process_accounts(input_file, output_file)
+    clonelive_path = checker._output_path("clonelive.js")
+    try:
+        if os.path.exists(clonelive_path):
+            with open(clonelive_path, "r", encoding="utf-8") as js_file:
+                raw_data = js_file.read().strip()
+            if raw_data:
+                data = json.loads(raw_data)
+                if isinstance(data, list):
+                    checker.clonelive_total_current = len(data)
+                else:
+                    checker.clonelive_total_current = 0
             else:
                 checker.clonelive_total_current = 0
         else:
             checker.clonelive_total_current = 0
-    else:
+    except Exception as summary_error:
+        checker.log_progress(f"Không đọc được clonelive.js để tổng kết: {summary_error}", Fore.YELLOW)
         checker.clonelive_total_current = 0
-except Exception as summary_error:
-    checker.log_progress(f"Không đọc được clonelive.js để tổng kết: {summary_error}", Fore.YELLOW)
-    checker.clonelive_total_current = 0
-checker.log_progress(f"Tổng kết clonelive.js: {checker.clonelive_added}/{checker.total_accounts} tài khoản mới ghi (tổng hiện có: {checker.clonelive_total_current}).", Fore.CYAN)
+    checker.log_progress(f"Tổng kết clonelive.js: {checker.clonelive_added}/{checker.total_accounts} tài khoản mới ghi (tổng hiện có: {checker.clonelive_total_current}).", Fore.CYAN)
+
+    return checker
+
 if __name__ == "__main__":
     try:
         main()
