@@ -7,8 +7,8 @@ import subprocess
 import sys
 import threading
 import time
-from pathlib import Path
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, simpledialog
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
@@ -30,8 +30,12 @@ class AccountsInputDialog(simpledialog.Dialog):
             master,
             text="Nhập danh sách tài khoản (email:mật khẩu mỗi dòng)",  # Chỉnh sửa
         ).grid(row=0, column=0, padx=5, pady=(5, 0), sticky="w")
-        self.text_widget = ScrolledText(master, width=60, height=12, wrap="none")
-        self.text_widget.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
+        # Sử dụng ttk.Frame cho nền của ScrolledText để đồng bộ với theme
+        text_frame = ttk.Frame(master, borderwidth=1, relief="sunken")
+        text_frame.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
+        self.text_widget = ScrolledText(text_frame, width=60, height=12, wrap="none", borderwidth=0, highlightthickness=0)
+        self.text_widget.pack(fill="both", expand=True, padx=2, pady=2)
+
         master.rowconfigure(1, weight=1)
         master.columnconfigure(0, weight=1)
         return self.text_widget
@@ -75,6 +79,10 @@ class Application(tk.Tk):
 
     def __init__(self) -> None:
         super().__init__()
+        # --- Bắt đầu phần CSS (Styling) ---
+        self._setup_style()
+        # --- Kết thúc phần CSS (Styling) ---
+        
         self.title("Garena Account Manager")
         self.geometry("1100x650")
 
@@ -108,69 +116,141 @@ class Application(tk.Tk):
         self._update_status_label()
         self.after(self.AUTO_REFRESH_MS, self._auto_refresh)
         self.after(200, self._poll_log_queue)
+        
+    def _setup_style(self) -> None:
+        """Thiết lập các style (CSS-like) cho ttk widgets."""
+        style = ttk.Style(self)
+        
+        style.theme_use('clam')
+        
+        PRIMARY_COLOR = "#0078D4" # Màu xanh dương
+        BACKGROUND_COLOR = "#f0f0f0"
+        BUTTON_COLOR = PRIMARY_COLOR
+        TEXT_COLOR = "#333333"
+        FONT = ("Segoe UI", 10)
+        FONT_BOLD = ("Segoe UI", 10, "bold")
+
+        self.option_add('*Font', FONT)
+        self.configure(background=BACKGROUND_COLOR)
+        
+        style.configure('TLabel', background=BACKGROUND_COLOR, foreground=TEXT_COLOR, padding=2)
+        style.configure('Header.TLabel', font=FONT_BOLD, foreground=PRIMARY_COLOR)
+        
+        style.configure('TFrame', background=BACKGROUND_COLOR)
+        
+        style.configure('TButton', 
+                        background=BUTTON_COLOR, 
+                        foreground="white", 
+                        bordercolor=BUTTON_COLOR,
+                        font=FONT,
+                        padding=(10, 5))
+        style.map('TButton', 
+                  background=[('active', PRIMARY_COLOR), ('pressed', PRIMARY_COLOR)],
+                  foreground=[('active', 'white'), ('pressed', 'white')])
+        
+        style.configure('Primary.TButton', background='#28a745', bordercolor='#28a745') # Màu xanh lá cho Run
+        style.map('Primary.TButton', background=[('active', '#218838'), ('pressed', '#218838')])
+        style.configure('Danger.TButton', background='#dc3545', bordercolor='#dc3545') # Màu đỏ cho Stop
+        style.map('Danger.TButton', background=[('active', '#c82333'), ('pressed', '#c82333')])
+
+
+        style.configure('Status.TLabel', 
+                        background='#cccccc', 
+                        foreground=TEXT_COLOR,
+                        relief='groove', 
+                        padding=(10, 5))
+        
+        style.configure("Vertical.TScrollbar", background=BACKGROUND_COLOR, troughcolor=BACKGROUND_COLOR)
 
     def _build_ui(self) -> None:
-        self.columnconfigure(1, weight=1)
+        # Xóa các cấu hình column/rowconfigure ban đầu cho cửa sổ chính
+        
+        # Đảm bảo cửa sổ chính mở rộng
+        self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
-        accounts_frame = ttk.Frame(self, padding=10)
-        accounts_frame.grid(row=0, column=0, sticky="nsew")
+        # 1. Tạo PanedWindow chính (chia ngang)
+        # PanedWindow sẽ chiếm row 0, column 0 của cửa sổ chính
+        self.paned_window = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
+        self.paned_window.grid(row=0, column=0, sticky="nsew", columnspan=2)
+        
+        # --- Accounts Frame (Left Panel) ---
+        accounts_frame = ttk.Frame(self.paned_window, padding=10, width=350) 
+        # Thêm vào PanedWindow. weight=0: không tự co giãn khi cửa sổ đổi kích thước (chỉ thay đổi khi kéo thanh chia)
+        self.paned_window.add(accounts_frame, weight=0) 
+        
         accounts_frame.rowconfigure(1, weight=1)
         accounts_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(accounts_frame, text="Danh sách tài khoản").grid(row=0, column=0, sticky="w")  # Chỉnh sửa
+        ttk.Label(accounts_frame, text="Danh sách tài khoản", style='Header.TLabel').grid(row=0, column=0, sticky="w")  # Chỉnh sửa
 
-        accounts_list_frame = ttk.Frame(accounts_frame)
-        accounts_list_frame.grid(row=1, column=0, sticky="nsew", pady=(5, 10))
-        accounts_list_frame.rowconfigure(0, weight=1)
-        accounts_list_frame.columnconfigure(0, weight=1)
-
+        # Listbox Container
+        accounts_list_container = ttk.Frame(accounts_frame, borderwidth=1, relief="sunken")
+        accounts_list_container.grid(row=1, column=0, sticky="nsew", pady=(5, 10))
+        accounts_list_container.rowconfigure(0, weight=1)
+        accounts_list_container.columnconfigure(0, weight=1)
+        
+        # Bỏ width để Listbox tự mở rộng theo PanedWindow
         self.accounts_listbox = tk.Listbox(
-            accounts_list_frame,
+            accounts_list_container, 
             activestyle="none",
             exportselection=False,
-            height=15,
+            height=15, 
+            bd=0, 
+            highlightthickness=0, 
+            selectbackground="#CDE8FF",
+            selectforeground="black",
+            bg="white",
+            fg="#333333"
         )
         accounts_scroll = ttk.Scrollbar(
-            accounts_list_frame,
+            accounts_list_container,
             orient="vertical",
             command=self.accounts_listbox.yview,
         )
         self.accounts_listbox.configure(yscrollcommand=accounts_scroll.set)
-        self.accounts_listbox.grid(row=0, column=0, sticky="nsew")
+        self.accounts_listbox.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
         accounts_scroll.grid(row=0, column=1, sticky="ns")
 
-        buttons_frame = ttk.Frame(accounts_frame)
+        # Buttons Frame
+        buttons_frame = ttk.Frame(accounts_frame, padding=(0, 5))
         buttons_frame.grid(row=2, column=0, sticky="ew")
         buttons_frame.columnconfigure((0, 1, 2, 3, 4), weight=1)
 
         self.add_button = ttk.Button(buttons_frame, text="Thêm", command=self._add_account)  # Chỉnh sửa
         self.remove_button = ttk.Button(buttons_frame, text="Xóa", command=self._remove_selected_account)  # Chỉnh sửa
         self.refresh_accounts_button = ttk.Button(buttons_frame, text="Tải lại", command=lambda: self._load_accounts(True))  # Chỉnh sửa
-        self.run_button = ttk.Button(buttons_frame, text="Chạy kiểm tra", command=self._start_check)  # Chỉnh sửa
-        self.stop_button = ttk.Button(buttons_frame, text="Dừng kiểm tra", command=self._stop_current_run)  # Chỉnh sửa
+        self.run_button = ttk.Button(buttons_frame, text="Chạy kiểm tra", command=self._start_check, style='Primary.TButton')  # Chỉnh sửa
+        self.stop_button = ttk.Button(buttons_frame, text="Dừng kiểm tra", command=self._stop_current_run, style='Danger.TButton')  # Chỉnh sửa
 
-        self.add_button.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
-        self.remove_button.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        self.refresh_accounts_button.grid(row=0, column=2, padx=5, pady=5, sticky="ew")
-        self.run_button.grid(row=0, column=3, padx=5, pady=5, sticky="ew")
-        self.stop_button.grid(row=0, column=4, padx=5, pady=5, sticky="ew")
+        self.add_button.grid(row=0, column=0, padx=3, pady=5, sticky="ew")
+        self.remove_button.grid(row=0, column=1, padx=3, pady=5, sticky="ew")
+        self.refresh_accounts_button.grid(row=0, column=2, padx=3, pady=5, sticky="ew")
+        self.run_button.grid(row=0, column=3, padx=3, pady=5, sticky="ew")
+        self.stop_button.grid(row=0, column=4, padx=3, pady=5, sticky="ew")
 
-        main_frame = ttk.Frame(self, padding=10)
-        main_frame.grid(row=0, column=1, sticky="nsew")
+        # --- Main Frame (Right Panel) ---
+        main_frame = ttk.Frame(self.paned_window, padding=10)
+        # Thêm vào PanedWindow. weight=1: chiếm hết không gian còn lại và tự co giãn
+        self.paned_window.add(main_frame, weight=1) 
+        
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(1, weight=1)
+        main_frame.rowconfigure(1, weight=1)  # File listbox
+        main_frame.rowconfigure(3, weight=1)  # File content (cho phép kéo giãn)
+        main_frame.rowconfigure(5, weight=1)  # Log text (cho phép kéo giãn)
 
+        # Files Label Frame (row 0)
         files_label_frame = ttk.Frame(main_frame)
         files_label_frame.grid(row=0, column=0, sticky="ew")
         files_label_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(files_label_frame, text="File kết quả").grid(row=0, column=0, sticky="w")  # Chỉnh sửa
+        ttk.Label(files_label_frame, text="File kết quả", style='Header.TLabel').grid(row=0, column=0, sticky="w")  # Chỉnh sửa
         self.open_dir_button = ttk.Button(files_label_frame, text="Mở thư mục", command=self._open_output_dir)  # Chỉnh sửa
         self.open_dir_button.grid(row=0, column=1, padx=5)
 
-        files_frame = ttk.Frame(main_frame)
-        files_frame.grid(row=1, column=0, sticky="nsew")
+        # Files Listbox Frame (row 1)
+        files_frame = ttk.Frame(main_frame, borderwidth=1, relief="sunken")
+        files_frame.grid(row=1, column=0, sticky="nsew", pady=5)
         files_frame.columnconfigure(0, weight=1)
         files_frame.rowconfigure(0, weight=1)
 
@@ -179,31 +259,53 @@ class Application(tk.Tk):
             activestyle="none",
             exportselection=False,
             height=12,
+            bd=0, 
+            highlightthickness=0, 
+            selectbackground="#CDE8FF",
+            selectforeground="black",
+            bg="white",
+            fg="#333333"
         )
-        self.files_listbox.grid(row=0, column=0, sticky="nsew")
+        self.files_listbox.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
         self.files_listbox.bind("<<ListboxSelect>>", self._on_file_selected)
 
+        # Preview Frame Label (row 2)
         preview_frame = ttk.Frame(main_frame)
-        preview_frame.grid(row=2, column=0, sticky="nsew", pady=(10, 0))
+        preview_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         preview_frame.columnconfigure(0, weight=1)
-        preview_frame.rowconfigure(0, weight=1)
+        
+        ttk.Label(preview_frame, text="Nội dung file", style='Header.TLabel').grid(row=0, column=0, sticky="w")  # Chỉnh sửa
+        
+        # ScrolledText for File Content (row 3)
+        file_content_container = ttk.Frame(main_frame, borderwidth=1, relief="sunken")
+        file_content_container.grid(row=3, column=0, sticky="nsew", pady=(5, 10))
+        file_content_container.columnconfigure(0, weight=1)
+        file_content_container.rowconfigure(0, weight=1)
 
-        ttk.Label(preview_frame, text="Nội dung file").grid(row=0, column=0, sticky="w")  # Chỉnh sửa
-        self.file_content = ScrolledText(preview_frame, height=15, wrap="none", state="disabled")
-        self.file_content.grid(row=1, column=0, sticky="nsew")
+        self.file_content = ScrolledText(file_content_container, height=15, wrap="none", state="disabled", bd=0, highlightthickness=0, bg="#ffffff", fg="#333333")
+        self.file_content.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
 
+        # Log Frame Label (row 4)
         log_frame = ttk.Frame(main_frame)
-        log_frame.grid(row=3, column=0, sticky="nsew", pady=(10, 0))
+        log_frame.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(1, weight=1)
 
-        ttk.Label(log_frame, text="Nhật ký").grid(row=0, column=0, sticky="w")  # Chỉnh sửa
-        self.log_text = ScrolledText(log_frame, height=10, state="disabled", wrap="word")
-        self.log_text.grid(row=1, column=0, sticky="nsew")
+        ttk.Label(log_frame, text="Nhật ký", style='Header.TLabel').grid(row=0, column=0, sticky="w")  # Chỉnh sửa
+        
+        # ScrolledText for Log (row 5)
+        log_container = ttk.Frame(main_frame, borderwidth=1, relief="sunken")
+        log_container.grid(row=5, column=0, sticky="nsew", pady=(5, 0))
+        log_container.columnconfigure(0, weight=1)
+        log_container.rowconfigure(0, weight=1)
 
+        self.log_text = ScrolledText(log_container, height=10, state="disabled", wrap="word", bd=0, highlightthickness=0, bg="#e9e9e9", fg="#333333")
+        self.log_text.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+
+        # Status Bar
         self.status_var = tk.StringVar(value=self._status_base)
-        status_bar = ttk.Label(self, textvariable=self.status_var, anchor="w", padding=5)
-        status_bar.grid(row=1, column=0, columnspan=2, sticky="ew")
+        status_bar = ttk.Label(self, textvariable=self.status_var, anchor="w", style='Status.TLabel', padding=5)
+        # Đặt Status Bar ở row 1, dưới PanedWindow
+        status_bar.grid(row=1, column=0, columnspan=2, sticky="ew") 
 
     def _load_accounts(self, force_update: bool = False) -> None:
         try:
@@ -421,9 +523,12 @@ class Application(tk.Tk):
                 button.state(["disabled"])
             else:
                 button.state(["!disabled"])
+        
         if running:
+            self.stop_button.state(["!disabled"])
             self._set_status("Đang kiểm tra tài khoản...")  # Chỉnh sửa
         else:
+            self.stop_button.state(["disabled"])
             self._set_status("Sẵn sàng")  # Chỉnh sửa
 
     def _poll_log_queue(self) -> None:
@@ -444,6 +549,7 @@ class Application(tk.Tk):
                         self._stop_requested = False
                         self._load_accounts(force_update=True)
                         self._refresh_output_files(force_update=True)
+                        self._append_log("=== Kiểm tra hoàn tất ===")
                     elif state == "cancelled":
                         self._append_log("=== Đã dừng kiểm tra theo yêu cầu ===")  # Chỉnh sửa
                         self.current_progress = "Đã dừng"  # Chỉnh sửa
@@ -489,4 +595,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Đảm bảo bạn có file check_garena.py trong cùng thư mục.
     main()
