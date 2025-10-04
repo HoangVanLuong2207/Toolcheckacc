@@ -219,13 +219,12 @@ class Application(tk.Tk):
 
         self.add_button = ttk.Button(buttons_frame, text="Thêm", command=self._add_account)  # Chỉnh sửa
         self.remove_button = ttk.Button(buttons_frame, text="Xóa", command=self._remove_selected_account)  # Chỉnh sửa
-        self.refresh_accounts_button = ttk.Button(buttons_frame, text="Tải lại", command=lambda: self._load_accounts(True))  # Chỉnh sửa
+       
         self.run_button = ttk.Button(buttons_frame, text="Chạy kiểm tra", command=self._start_check, style='Primary.TButton')  # Chỉnh sửa
         self.stop_button = ttk.Button(buttons_frame, text="Dừng kiểm tra", command=self._stop_current_run, style='Danger.TButton')  # Chỉnh sửa
 
         self.add_button.grid(row=0, column=0, padx=3, pady=5, sticky="ew")
         self.remove_button.grid(row=0, column=1, padx=3, pady=5, sticky="ew")
-        self.refresh_accounts_button.grid(row=0, column=2, padx=3, pady=5, sticky="ew")
         self.run_button.grid(row=0, column=3, padx=3, pady=5, sticky="ew")
         self.stop_button.grid(row=0, column=4, padx=3, pady=5, sticky="ew")
 
@@ -515,7 +514,6 @@ class Application(tk.Tk):
         managed_buttons = (
             self.add_button,
             self.remove_button,
-            self.refresh_accounts_button,
             self.run_button,
         )
         for button in managed_buttons:
